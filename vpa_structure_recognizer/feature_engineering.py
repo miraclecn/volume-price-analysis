@@ -54,6 +54,8 @@ def compute_features(
         raise ValueError("scope_id_column or scope_id is required")
 
     base["scope_type"] = scope_type
+    for column in ["open", "high", "low", "close", "prev_close", "volume", "amount"]:
+        base[column] = pd.to_numeric(base[column], errors="coerce")
     base = base.sort_values(["scope_id", "date"]).reset_index(drop=True)
     _add_base_price_features(base)
 
@@ -83,7 +85,7 @@ def compute_features(
 
     output = pd.concat(window_frames, ignore_index=True)
     output = output.sort_values(["scope_id", "date", "window_n"]).reset_index(drop=True)
-    return output.astype(object).where(pd.notna(output), None)
+    return output
 
 
 def _add_base_price_features(frame: pd.DataFrame) -> None:
@@ -114,5 +116,9 @@ def _rolling(grouped: pd.core.groupby.SeriesGroupBy, window: int, op: str) -> pd
 
 
 def _safe_div(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
-    result = numerator / denominator
-    return result.where(denominator.notna() & (denominator != 0))
+    numeric_numerator = pd.to_numeric(numerator, errors="coerce")
+    numeric_denominator = pd.to_numeric(denominator, errors="coerce")
+    valid = numeric_denominator.notna() & (numeric_denominator != 0)
+    result = pd.Series(index=numeric_numerator.index, dtype="float64")
+    result.loc[valid] = numeric_numerator.loc[valid] / numeric_denominator.loc[valid]
+    return result

@@ -82,4 +82,4 @@ def test_compute_features_emits_one_row_per_window_per_date():
         },
     ]
     assert features["body_ratio"].tolist() == [0.0, 0.0]
-    assert features["close_position"].tolist() == [None, None]
+    assert features["close_position"].isna().all()

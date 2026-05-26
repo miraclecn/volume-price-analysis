@@ -72,6 +72,13 @@ def _label_row(row: object) -> tuple[str, str, str]:
     lower_shadow_ratio = _value(row.lower_shadow_ratio)
     close_position = _value(row.close_position, 0.5)
     ret_pct = _value(row.ret_pct)
+    high = _value(row.high)
+    low = _value(row.low)
+    close = _value(row.close)
+    has_price_high = not _missing(row.price_high_n)
+    has_price_low = not _missing(row.price_low_n)
+    price_high_n = _value(row.price_high_n)
+    price_low_n = _value(row.price_low_n)
     if (
         vol_rvol_n >= 1.8
         and range_rvol_n <= 0.9
@@ -121,9 +128,10 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "Large down move occurred on low relative volume.",
         )
     if (
-        row.high >= row.price_high_n
-        and row.close < row.price_high_n
-            and upper_shadow_ratio >= 0.45
+        has_price_high
+        and high >= price_high_n
+        and close < price_high_n
+        and upper_shadow_ratio >= 0.45
     ):
         return (
             "BREAKOUT_PULLBACK",
@@ -131,9 +139,10 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "Intraday breakout could not hold by the close.",
         )
     if (
-        row.low <= row.price_low_n
-        and row.close > row.price_low_n
-            and lower_shadow_ratio >= 0.45
+        has_price_low
+        and low <= price_low_n
+        and close > price_low_n
+        and lower_shadow_ratio >= 0.45
     ):
         return (
             "BREAKDOWN_RECOVERY",

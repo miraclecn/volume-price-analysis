@@ -87,6 +87,7 @@ class ResearchSourceDuckDB:
         """
         frame = con.execute(query, [start, end]).fetchdf()
         con.close()
+        frame = frame.drop_duplicates(["date", "code"], keep="last")
         return _nullable_frame(frame[STOCK_BAR_COLUMNS])
 
 
@@ -140,6 +141,7 @@ class AuditedStockDuckDB:
             [start, end],
         ).fetchdf()
         con.close()
+        frame = frame.drop_duplicates(["date", "code"], keep="last")
         return _nullable_frame(frame[STOCK_BAR_COLUMNS])
 
 

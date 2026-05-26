@@ -34,61 +34,76 @@ def classify_structure_states(
     sequence_stats: pd.DataFrame,
     trend_context: pd.DataFrame,
 ) -> pd.DataFrame:
-    context_index = {
-        (row.date, row.scope_type, row.scope_id, int(row.window_n)): row
-        for row in trend_context.itertuples(index=False)
-    }
-    rows: list[dict[str, object]] = []
-
-    grouped = sequence_stats.groupby(["date", "scope_type", "scope_id"], sort=True)
-    for (date, scope_type, scope_id), group in grouped:
-        states_by_window: dict[int, str] = {}
-        strengths: list[float] = []
-        contexts = []
-        for seq in group.itertuples(index=False):
-            context = context_index.get((seq.date, seq.scope_type, seq.scope_id, int(seq.window_n)))
-            contexts.append(context)
-            state = _state_for_sequence(seq.sequence_pattern, context)
-            states_by_window[int(seq.window_n)] = state
-            if state != "UNCLEAR":
-                strengths.append(float(seq.sequence_strength_score))
-
-        final_state = _final_state(states_by_window, contexts)
-        trend, position = _background(contexts)
-        rows.append(
-            {
-                "date": date,
-                "scope_type": scope_type,
-                "scope_id": scope_id,
-                "state_10": states_by_window.get(10),
-                "state_20": states_by_window.get(20),
-                "state_30": states_by_window.get(30),
-                "state_60": states_by_window.get(60),
-                "state_120": states_by_window.get(120),
-                "state_240": states_by_window.get(240),
-                "final_state": final_state,
-                "trend_background": trend,
-                "position_background": position,
-                "market_score": None,
-                "sector_score": None,
-                "self_score": None,
-                "relative_strength_score": None,
-                "resonance_score": None,
-                "final_rating": None,
-                "confidence": _confidence(strengths, final_state),
-                "main_features": _main_features(final_state),
-                "risk_flags": _risk_flags(final_state),
-                "bullish_confirm_condition": _bullish_condition(final_state),
-                "bearish_invalidate_condition": _bearish_condition(final_state),
-            }
+    context = trend_context[
+        ["date", "scope_type", "scope_id", "window_n", "trend_label", "position_label"]
+    ]
+    merged = sequence_stats.merge(
+        context,
+        on=["date", "scope_type", "scope_id", "window_n"],
+        how="left",
+    )
+    merged["window_state"] = [
+        _state_for_pattern(pattern, position)
+        for pattern, position in zip(
+            merged["sequence_pattern"],
+            merged["position_label"].fillna("UNKNOWN"),
         )
+    ]
+    index_columns = ["date", "scope_type", "scope_id"]
+    state_values = merged[index_columns + ["window_n", "window_state"]].drop_duplicates(
+        index_columns + ["window_n"], keep="last"
+    )
+    states_wide = (
+        state_values.pivot(
+            index=index_columns,
+            columns="window_n",
+            values="window_state",
+        )
+        .rename(columns=lambda window: f"state_{int(window)}")
+        .reset_index()
+    )
+    for column in ["state_10", "state_20", "state_30", "state_60", "state_120", "state_240"]:
+        if column not in states_wide.columns:
+            states_wide[column] = None
 
-    output = pd.DataFrame(rows, columns=STATE_COLUMNS)
-    return output.astype(object).where(pd.notna(output), None)
+    background = (
+        merged.sort_values(index_columns + ["window_n"])
+        .drop_duplicates(index_columns, keep="last")[
+            index_columns + ["trend_label", "position_label"]
+        ]
+    ).rename(
+        columns={
+            "trend_label": "trend_background",
+            "position_label": "position_background",
+        }
+    )
+    output = states_wide.merge(background, on=index_columns, how="left")
+    output["final_state"] = [
+        _final_state_from_row(row)
+        for row in output[
+            ["state_10", "state_20", "state_30", "state_60", "state_120", "state_240", "position_background"]
+        ].itertuples(index=False)
+    ]
+    confidence_source = merged[merged["window_state"] != "UNCLEAR"]
+    confidence = (
+        confidence_source.groupby(index_columns)["sequence_strength_score"].mean().div(100).fillna(0)
+    )
+    output = output.merge(confidence.rename("confidence"), on=index_columns, how="left")
+    output["confidence"] = output["confidence"].where(output["final_state"] != "UNCLEAR", 0.0).round(4)
+    output["market_score"] = None
+    output["sector_score"] = None
+    output["self_score"] = None
+    output["relative_strength_score"] = None
+    output["resonance_score"] = None
+    output["final_rating"] = None
+    output["main_features"] = output["final_state"].map(_main_features)
+    output["risk_flags"] = output["final_state"].map(_risk_flags)
+    output["bullish_confirm_condition"] = output["final_state"].map(_bullish_condition)
+    output["bearish_invalidate_condition"] = output["final_state"].map(_bearish_condition)
+    return output[STATE_COLUMNS]
 
 
-def _state_for_sequence(pattern: str, context: object | None) -> str:
-    position = getattr(context, "position_label", "UNKNOWN")
+def _state_for_pattern(pattern: str, position: str) -> str:
     if pattern == "DECLINE_EXHAUSTION_PATTERN":
         return "DECLINE_EXHAUSTION"
     if pattern == "LOW_LEVEL_SUPPORT_PATTERN":
@@ -106,9 +121,9 @@ def _state_for_sequence(pattern: str, context: object | None) -> str:
     return "UNCLEAR"
 
 
-def _final_state(states_by_window: dict[int, str], contexts: list[object | None]) -> str:
-    states = list(states_by_window.values())
-    positions = {getattr(context, "position_label", "UNKNOWN") for context in contexts if context}
+def _final_state_from_row(row: object) -> str:
+    states = [value for value in row[:-1] if value is not None and not pd.isna(value)]
+    positions = {row.position_background}
     if "POSSIBLE_DISTRIBUTION" in states:
         return "POSSIBLE_DISTRIBUTION"
     low_support_evidence = sum(
@@ -126,20 +141,6 @@ def _final_state(states_by_window: dict[int, str], contexts: list[object | None]
         if candidate in states:
             return candidate
     return "UNCLEAR"
-
-
-def _background(contexts: list[object | None]) -> tuple[str, str]:
-    known = [context for context in contexts if context is not None]
-    if not known:
-        return "UNKNOWN", "UNKNOWN"
-    widest = max(known, key=lambda context: int(context.window_n))
-    return widest.trend_label, widest.position_label
-
-
-def _confidence(strengths: list[float], final_state: str) -> float:
-    if final_state == "UNCLEAR" or not strengths:
-        return 0.0
-    return round(min(1.0, sum(strengths) / len(strengths) / 100.0), 4)
 
 
 def _main_features(final_state: str) -> str:

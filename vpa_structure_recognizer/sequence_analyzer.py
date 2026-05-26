@@ -51,99 +51,127 @@ SUPPLY_LABELS = {"HIGH_VOLUME_UPPER_SUPPLY", "BREAKOUT_PULLBACK"}
 
 
 def analyze_sequences(labels: pd.DataFrame, trend_context: pd.DataFrame) -> pd.DataFrame:
-    context_index = {
-        (row.date, row.scope_type, row.scope_id, int(row.window_n)): row
-        for row in trend_context.itertuples(index=False)
-    }
-    rows: list[dict[str, object]] = []
-
-    grouped = labels.sort_values(["scope_type", "scope_id", "window_n", "date"]).groupby(
-        ["scope_type", "scope_id", "window_n"], sort=False
+    stats = labels.sort_values(["scope_type", "scope_id", "window_n", "date"]).reset_index(
+        drop=True
     )
-    for (_scope_type, _scope_id, window_n), group in grouped:
-        window = int(window_n)
-        ordered = group.reset_index(drop=True)
-        for idx, latest in ordered.iterrows():
-            sequence = ordered.iloc[max(0, idx - window + 1) : idx + 1]
-            context = context_index.get(
-                (latest["date"], latest["scope_type"], latest["scope_id"], window)
-            )
-            rows.append(_stats_row(sequence, latest, context, window))
+    stats["_normal"] = (stats["normal_or_abnormal"] == "NORMAL").astype(int)
+    stats["_abnormal"] = (stats["normal_or_abnormal"] == "ABNORMAL").astype(int)
+    stats["_bullish"] = stats["raw_label"].isin(BULLISH_LABELS).astype(int)
+    stats["_bearish"] = stats["raw_label"].isin(BEARISH_LABELS).astype(int)
+    stats["_neutral"] = (stats["raw_label"] == "NEUTRAL").astype(int)
+    stats["_support"] = stats["raw_label"].isin(SUPPORT_LABELS).astype(int)
+    stats["_supply"] = stats["raw_label"].isin(SUPPLY_LABELS).astype(int)
+    stats["_high_volume_up"] = (stats["raw_label"] == "NORMAL_UP_CONFIRM").astype(int)
+    stats["_high_volume_down"] = (stats["raw_label"] == "NORMAL_DOWN_CONFIRM").astype(int)
+    stats["_high_volume_stall"] = (stats["raw_label"] == "HIGH_VOLUME_LOW_PROGRESS").astype(int)
+    stats["_low_volume_pullback"] = (stats["raw_label"] == "LOW_VOLUME_BIG_DOWN").astype(int)
+    stats["_low_volume_rebound"] = (stats["raw_label"] == "LOW_VOLUME_BIG_UP").astype(int)
+    stats["_breakout_like"] = (stats["raw_label"] == "BREAKOUT_PULLBACK").astype(int)
+    stats["_breakdown_like"] = (stats["raw_label"] == "BREAKDOWN_RECOVERY").astype(int)
 
-    return pd.DataFrame(rows, columns=SEQUENCE_COLUMNS)
-
-
-def _stats_row(
-    sequence: pd.DataFrame,
-    latest: pd.Series,
-    context: object | None,
-    window_n: int,
-) -> dict[str, object]:
-    raw_labels = sequence["raw_label"]
-    normal_count = int((sequence["normal_or_abnormal"] == "NORMAL").sum())
-    abnormal_count = int((sequence["normal_or_abnormal"] == "ABNORMAL").sum())
-    support_count = int(raw_labels.isin(SUPPORT_LABELS).sum())
-    supply_count = int(raw_labels.isin(SUPPLY_LABELS).sum())
-    high_volume_stall_count = int((raw_labels == "HIGH_VOLUME_LOW_PROGRESS").sum())
-    low_volume_pullback_count = int((raw_labels == "LOW_VOLUME_BIG_DOWN").sum())
-    low_volume_rebound_count = int((raw_labels == "LOW_VOLUME_BIG_UP").sum())
-    breakout_like_count = int((raw_labels == "BREAKOUT_PULLBACK").sum())
-    breakdown_like_count = int((raw_labels == "BREAKDOWN_RECOVERY").sum())
-    previous_bull, last_bull = _split_bull_scores(sequence)
-    bull_change = last_bull - previous_bull
-    trend_label = getattr(context, "trend_label", "UNKNOWN")
-    position_label = getattr(context, "position_label", "UNKNOWN")
-    pattern = _classify_pattern(
-        trend_label=trend_label,
-        position_label=position_label,
-        support_count=support_count,
-        supply_count=supply_count,
-        high_volume_stall_count=high_volume_stall_count,
-        low_volume_pullback_count=low_volume_pullback_count,
-        low_volume_rebound_count=low_volume_rebound_count,
-        breakout_like_count=breakout_like_count,
-        bull_score_change=bull_change,
-        raw_labels=raw_labels,
+    pieces = [
+        _rolling_stats_for_window(group, int(window_n))
+        for window_n, group in stats.groupby("window_n", sort=False)
+    ]
+    rolled = pd.concat(pieces, ignore_index=True)
+    context = trend_context[
+        ["date", "scope_type", "scope_id", "window_n", "trend_label", "position_label"]
+    ]
+    rolled = rolled.merge(
+        context,
+        on=["date", "scope_type", "scope_id", "window_n"],
+        how="left",
     )
-
-    return {
-        "date": latest["date"],
-        "scope_type": latest["scope_type"],
-        "scope_id": latest["scope_id"],
-        "window_n": window_n,
-        "parent_window_n": latest["parent_window_n"],
-        "normal_count": normal_count,
-        "abnormal_count": abnormal_count,
-        "abnormal_ratio": abnormal_count / len(sequence),
-        "bullish_label_count": int(raw_labels.isin(BULLISH_LABELS).sum()),
-        "bearish_label_count": int(raw_labels.isin(BEARISH_LABELS).sum()),
-        "neutral_label_count": int((raw_labels == "NEUTRAL").sum()),
-        "support_label_count": support_count,
-        "supply_label_count": supply_count,
-        "high_volume_up_count": int((raw_labels == "NORMAL_UP_CONFIRM").sum()),
-        "high_volume_down_count": int((raw_labels == "NORMAL_DOWN_CONFIRM").sum()),
-        "high_volume_stall_count": high_volume_stall_count,
-        "long_upper_shadow_count": supply_count,
-        "long_lower_shadow_count": support_count,
-        "low_volume_pullback_count": low_volume_pullback_count,
-        "low_volume_rebound_count": low_volume_rebound_count,
-        "breakout_like_count": breakout_like_count,
-        "breakdown_like_count": breakdown_like_count,
-        "last_part_bull_score": last_bull,
-        "previous_part_bull_score": previous_bull,
-        "bull_score_change": bull_change,
-        "sequence_pattern": pattern,
-        "sequence_strength_score": _sequence_strength(pattern, bull_change, abnormal_count),
-    }
+    rolled["sequence_pattern"] = [
+        _classify_pattern(
+            trend_label=row.trend_label if pd.notna(row.trend_label) else "UNKNOWN",
+            position_label=row.position_label if pd.notna(row.position_label) else "UNKNOWN",
+            support_count=int(row.support_label_count),
+            supply_count=int(row.supply_label_count),
+            high_volume_stall_count=int(row.high_volume_stall_count),
+            low_volume_pullback_count=int(row.low_volume_pullback_count),
+            low_volume_rebound_count=int(row.low_volume_rebound_count),
+            breakout_like_count=int(row.breakout_like_count),
+            bull_score_change=float(row.bull_score_change),
+            normal_up_count=int(row.high_volume_up_count),
+        )
+        for row in rolled.itertuples(index=False)
+    ]
+    rolled["sequence_strength_score"] = [
+        _sequence_strength(pattern, change, abnormal)
+        for pattern, change, abnormal in zip(
+            rolled["sequence_pattern"],
+            rolled["bull_score_change"],
+            rolled["abnormal_count"],
+        )
+    ]
+    return rolled[SEQUENCE_COLUMNS]
 
 
-def _split_bull_scores(sequence: pd.DataFrame) -> tuple[float, float]:
-    half = max(1, len(sequence) // 2)
-    previous = sequence.iloc[:half]["bull_bear_score"].mean()
-    last = sequence.iloc[half:]["bull_bear_score"].mean()
-    if pd.isna(last):
-        last = previous
-    return float(previous), float(last)
+def _rolling_stats_for_window(group: pd.DataFrame, window_n: int) -> pd.DataFrame:
+    output = group[
+        ["date", "scope_type", "scope_id", "window_n", "parent_window_n"]
+    ].copy()
+    grouped = group.groupby(["scope_type", "scope_id"], sort=False)
+    position = grouped.cumcount() + 1
+    count = position.clip(upper=window_n)
+    for source, target in [
+        ("_normal", "normal_count"),
+        ("_abnormal", "abnormal_count"),
+        ("_bullish", "bullish_label_count"),
+        ("_bearish", "bearish_label_count"),
+        ("_neutral", "neutral_label_count"),
+        ("_support", "support_label_count"),
+        ("_supply", "supply_label_count"),
+        ("_high_volume_up", "high_volume_up_count"),
+        ("_high_volume_down", "high_volume_down_count"),
+        ("_high_volume_stall", "high_volume_stall_count"),
+        ("_low_volume_pullback", "low_volume_pullback_count"),
+        ("_low_volume_rebound", "low_volume_rebound_count"),
+        ("_breakout_like", "breakout_like_count"),
+        ("_breakdown_like", "breakdown_like_count"),
+    ]:
+        output[target] = _rolling_sum(group, source, window_n).fillna(0).astype(int)
+    output["abnormal_ratio"] = output["abnormal_count"] / count
+    output["long_upper_shadow_count"] = output["supply_label_count"]
+    output["long_lower_shadow_count"] = output["support_label_count"]
+    half = max(1, window_n // 2)
+    last, previous = _half_window_means(group, half)
+    output["last_part_bull_score"] = last
+    output["previous_part_bull_score"] = previous
+    output["bull_score_change"] = output["last_part_bull_score"] - output[
+        "previous_part_bull_score"
+    ]
+    return output
+
+
+def _rolling_sum(group: pd.DataFrame, column: str, window: int) -> pd.Series:
+    keys = [group["scope_type"], group["scope_id"]]
+    source = group[column].fillna(0)
+    cumsum = source.groupby(keys, sort=False).cumsum()
+    shifted = cumsum.groupby(keys, sort=False).shift(window).fillna(0)
+    return cumsum - shifted
+
+
+def _half_window_means(group: pd.DataFrame, half: int) -> tuple[pd.Series, pd.Series]:
+    keys = [group["scope_type"], group["scope_id"]]
+    grouped = group.groupby(["scope_type", "scope_id"], sort=False)
+    position = grouped.cumcount() + 1
+    cumsum = grouped["bull_bear_score"].cumsum()
+
+    last_start = cumsum.groupby(keys, sort=False).shift(half).fillna(0)
+    last_sum = cumsum - last_start
+    last_count = position.clip(upper=half)
+    last = last_sum / last_count
+
+    previous_end = last_start
+    previous_start = cumsum.groupby(keys, sort=False).shift(half * 2).fillna(0)
+    previous_count = (position - half).clip(lower=0, upper=half)
+    previous_sum = previous_end - previous_start
+    previous = previous_sum.where(previous_count > 0, last) / previous_count.where(
+        previous_count > 0, 1
+    )
+    return last, previous
 
 
 def _classify_pattern(
@@ -157,7 +185,7 @@ def _classify_pattern(
     low_volume_rebound_count: int,
     breakout_like_count: int,
     bull_score_change: float,
-    raw_labels: pd.Series,
+    normal_up_count: int,
 ) -> str:
     low_position = position_label in {"LOW", "MID_LOW"}
     high_position = position_label in {"MID_HIGH", "HIGH"}
@@ -183,7 +211,7 @@ def _classify_pattern(
         return "HIGH_LEVEL_SUPPLY_PATTERN"
     if (
         trend_label in {"UPTREND", "RECOVERING"}
-        and int((raw_labels == "NORMAL_UP_CONFIRM").sum()) >= 2
+        and normal_up_count >= 2
         and supply_count == 0
     ):
         return "HEALTHY_UPTREND_PATTERN"

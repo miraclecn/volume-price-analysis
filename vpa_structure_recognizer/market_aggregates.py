@@ -39,6 +39,8 @@ def build_market_bars(stock_bars: pd.DataFrame) -> pd.DataFrame:
 
 def build_sector_bars(stock_bars: pd.DataFrame) -> pd.DataFrame:
     bars = _with_returns(stock_bars)
+    bars["industry_code"] = bars["industry_code"].fillna("UNKNOWN_SECTOR")
+    bars["industry_name"] = bars["industry_name"].fillna("Unknown Sector")
     rows: list[dict[str, object]] = []
     group_columns = ["date", "industry_code", "industry_name"]
     for (date, code, name), group in bars.groupby(group_columns, sort=True, dropna=False):
