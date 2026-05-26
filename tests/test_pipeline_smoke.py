@@ -17,6 +17,8 @@ def _create_source(path: Path) -> None:
             high_adj double,
             low_adj double,
             close_adj double,
+            pre_close double,
+            adj_factor double,
             volume_shares double,
             turnover_value_cny double,
             turnover_rate_pct double
@@ -66,13 +68,15 @@ def _create_source(path: Path) -> None:
                 close + 0.4,
                 close - 0.5,
                 close,
+                close - 0.1,
+                1.0,
                 1000 + idx * 100,
                 close * (1000 + idx * 100),
                 1.0,
             )
         )
         tradeability.append(("000001.SZ", date, False, close * 1.1, close * 0.9))
-    con.executemany("insert into daily_bar_pit values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    con.executemany("insert into daily_bar_pit values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     con.executemany("insert into tradeability_state_daily values (?, ?, ?, ?, ?)", tradeability)
     con.execute(
         "insert into industry_classification_pit values ('000001.SZ', 'BK001', 'Banking', '20200101', null)"

@@ -18,6 +18,8 @@ def _create_research_source_fixture(path: Path) -> None:
             high_adj double,
             low_adj double,
             close_adj double,
+            pre_close double,
+            adj_factor double,
             volume_shares double,
             turnover_value_cny double,
             turnover_rate_pct double
@@ -47,10 +49,10 @@ def _create_research_source_fixture(path: Path) -> None:
         """
     )
     con.executemany(
-        "insert into daily_bar_pit values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "insert into daily_bar_pit values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
-            ("000001.SZ", "20240102", False, 10.0, 11.0, 9.8, 10.5, 1000, 10500, 1.2),
-            ("000001.SZ", "20240103", False, 10.5, 11.2, 10.2, 11.0, 1200, 13200, 1.5),
+            ("000001.SZ", "20240102", False, 10.0, 11.0, 9.8, 10.5, 9.8, 1.0, 1000, 10500, 1.2),
+            ("000001.SZ", "20240103", False, 10.5, 11.2, 10.2, 11.0, 10.5, 1.0, 1200, 13200, 1.5),
         ],
     )
     con.executemany(
@@ -75,7 +77,7 @@ def test_research_source_stock_bars_normalize_pit_adjusted_fields(tmp_path):
     assert list(rows.columns) == STOCK_BAR_COLUMNS
     assert rows["date"].tolist() == ["2024-01-02", "2024-01-03"]
     assert rows["code"].tolist() == ["000001.SZ", "000001.SZ"]
-    assert rows["prev_close"].tolist() == [None, 10.5]
+    assert rows["prev_close"].tolist() == [9.8, 10.5]
     assert rows["volume"].tolist() == [1000, 1200]
     assert rows["amount"].tolist() == [10500, 13200]
     assert rows["turnover_rate"].tolist() == [1.2, 1.5]

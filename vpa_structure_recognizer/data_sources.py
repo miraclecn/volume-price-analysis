@@ -39,10 +39,7 @@ class ResearchSourceDuckDB:
                     high_adj,
                     low_adj,
                     close_adj,
-                    lag(close_adj) over (
-                        partition by security_id
-                        order by trade_date
-                    ) as prev_close,
+                    pre_close * adj_factor as prev_close,
                     volume_shares,
                     turnover_value_cny,
                     turnover_rate_pct
