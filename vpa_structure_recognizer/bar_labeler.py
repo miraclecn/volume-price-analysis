@@ -23,7 +23,7 @@ LABEL_COLUMNS = [
 
 
 def classify_volume_level(vol_rvol_n: float | None) -> str:
-    if vol_rvol_n is None:
+    if _missing(vol_rvol_n):
         return "UNKNOWN_VOLUME"
     if vol_rvol_n < 0.7:
         return "LOW_VOLUME"
@@ -65,10 +65,17 @@ def label_bars(features: pd.DataFrame, parent_windows: dict[int, list[int]]) -> 
 
 
 def _label_row(row: object) -> tuple[str, str, str]:
+    vol_rvol_n = _value(row.vol_rvol_n)
+    range_rvol_n = _value(row.range_rvol_n)
+    body_ratio = _value(row.body_ratio)
+    upper_shadow_ratio = _value(row.upper_shadow_ratio)
+    lower_shadow_ratio = _value(row.lower_shadow_ratio)
+    close_position = _value(row.close_position, 0.5)
+    ret_pct = _value(row.ret_pct)
     if (
-        row.vol_rvol_n >= 1.8
-        and row.range_rvol_n <= 0.9
-        and row.body_ratio <= 0.35
+        vol_rvol_n >= 1.8
+        and range_rvol_n <= 0.9
+        and body_ratio <= 0.35
     ):
         return (
             "HIGH_VOLUME_LOW_PROGRESS",
@@ -76,9 +83,9 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "High volume produced limited price progress.",
         )
     if (
-        row.vol_rvol_n >= 1.5
-        and row.upper_shadow_ratio >= 0.45
-        and row.close_position <= 0.6
+        vol_rvol_n >= 1.5
+        and upper_shadow_ratio >= 0.45
+        and close_position <= 0.6
     ):
         return (
             "HIGH_VOLUME_UPPER_SUPPLY",
@@ -86,9 +93,9 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "High volume met upper supply and closed away from the high.",
         )
     if (
-        row.vol_rvol_n >= 1.5
-        and row.lower_shadow_ratio >= 0.45
-        and row.close_position >= 0.4
+        vol_rvol_n >= 1.5
+        and lower_shadow_ratio >= 0.45
+        and close_position >= 0.4
     ):
         return (
             "HIGH_VOLUME_LOWER_SUPPORT",
@@ -96,17 +103,17 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "High volume found lower support and recovered from the low.",
         )
     if (
-        row.vol_rvol_n < 0.8
-        and row.ret_pct > 0
-        and row.range_rvol_n >= 1.2
-        and row.close_position >= 0.7
+        vol_rvol_n < 0.8
+        and ret_pct > 0
+        and range_rvol_n >= 1.2
+        and close_position >= 0.7
     ):
         return ("LOW_VOLUME_BIG_UP", "ABNORMAL", "Large up move lacked volume support.")
     if (
-        row.vol_rvol_n < 0.8
-        and row.ret_pct < 0
-        and row.range_rvol_n >= 1.2
-        and row.close_position <= 0.3
+        vol_rvol_n < 0.8
+        and ret_pct < 0
+        and range_rvol_n >= 1.2
+        and close_position <= 0.3
     ):
         return (
             "LOW_VOLUME_BIG_DOWN",
@@ -116,7 +123,7 @@ def _label_row(row: object) -> tuple[str, str, str]:
     if (
         row.high >= row.price_high_n
         and row.close < row.price_high_n
-        and row.upper_shadow_ratio >= 0.45
+            and upper_shadow_ratio >= 0.45
     ):
         return (
             "BREAKOUT_PULLBACK",
@@ -126,7 +133,7 @@ def _label_row(row: object) -> tuple[str, str, str]:
     if (
         row.low <= row.price_low_n
         and row.close > row.price_low_n
-        and row.lower_shadow_ratio >= 0.45
+            and lower_shadow_ratio >= 0.45
     ):
         return (
             "BREAKDOWN_RECOVERY",
@@ -134,10 +141,10 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "Intraday breakdown recovered by the close.",
         )
     if (
-        row.ret_pct > 0
-        and row.vol_rvol_n >= 1.0
-        and row.body_ratio >= 0.45
-        and row.close_position >= 0.65
+        ret_pct > 0
+        and vol_rvol_n >= 1.0
+        and body_ratio >= 0.45
+        and close_position >= 0.65
     ):
         return (
             "NORMAL_UP_CONFIRM",
@@ -145,17 +152,17 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "Up move had volume support and a strong close.",
         )
     if (
-        row.ret_pct < 0
-        and row.vol_rvol_n >= 1.0
-        and row.body_ratio >= 0.45
-        and row.close_position <= 0.35
+        ret_pct < 0
+        and vol_rvol_n >= 1.0
+        and body_ratio >= 0.45
+        and close_position <= 0.35
     ):
         return (
             "NORMAL_DOWN_CONFIRM",
             "NORMAL",
             "Down move had volume support and a weak close.",
         )
-    if row.vol_rvol_n < 0.8 and row.range_rvol_n < 0.9 and abs(row.ret_pct) <= 0.01:
+    if vol_rvol_n < 0.8 and range_rvol_n < 0.9 and abs(ret_pct) <= 0.01:
         return (
             "LOW_VOLUME_SMALL_MOVE",
             "NORMAL",
@@ -165,6 +172,7 @@ def _label_row(row: object) -> tuple[str, str, str]:
 
 
 def _price_result_level(ret_pct: float) -> str:
+    ret_pct = _value(ret_pct)
     if ret_pct > 0:
         return "UP"
     if ret_pct < 0:
@@ -173,16 +181,20 @@ def _price_result_level(ret_pct: float) -> str:
 
 
 def _efficiency_level(row: object) -> str:
-    if row.vol_rvol_n >= 1.8 and row.range_rvol_n <= 0.9:
+    vol_rvol_n = _value(row.vol_rvol_n)
+    range_rvol_n = _value(row.range_rvol_n)
+    if vol_rvol_n >= 1.8 and range_rvol_n <= 0.9:
         return "LOW_EFFICIENCY"
-    if row.vol_rvol_n < 0.8 and row.range_rvol_n >= 1.2:
+    if vol_rvol_n < 0.8 and range_rvol_n >= 1.2:
         return "UNCONFIRMED_PROGRESS"
     return "NORMAL_EFFICIENCY"
 
 
 def _bull_bear_score(row: object) -> float:
-    direction = 1.0 if row.ret_pct > 0 else -1.0 if row.ret_pct < 0 else 0.0
-    close_bias = (row.close_position - 0.5) * 2.0
+    ret_pct = _value(row.ret_pct)
+    close_position = _value(row.close_position, 0.5)
+    direction = 1.0 if ret_pct > 0 else -1.0 if ret_pct < 0 else 0.0
+    close_bias = (close_position - 0.5) * 2.0
     return round((direction * 50.0) + (close_bias * 25.0), 4)
 
 
@@ -190,9 +202,9 @@ def _supply_score(label: str, row: object) -> float:
     score = 0.0
     if "SUPPLY" in label or "PULLBACK" in label:
         score += 70.0
-    if row.upper_shadow_ratio >= 0.45:
+    if _value(row.upper_shadow_ratio) >= 0.45:
         score += 20.0
-    if row.close_position <= 0.35:
+    if _value(row.close_position, 0.5) <= 0.35:
         score += 10.0
     return min(100.0, score)
 
@@ -201,12 +213,22 @@ def _demand_score(label: str, row: object) -> float:
     score = 0.0
     if "SUPPORT" in label or label == "NORMAL_UP_CONFIRM":
         score += 70.0
-    if row.lower_shadow_ratio >= 0.45:
+    if _value(row.lower_shadow_ratio) >= 0.45:
         score += 20.0
-    if row.close_position >= 0.65:
+    if _value(row.close_position, 0.5) >= 0.65:
         score += 10.0
     return min(100.0, score)
 
 
 def _volatility_score(row: object) -> float:
-    return round(min(100.0, max(0.0, row.range_rvol_n * 50.0)), 4)
+    return round(min(100.0, max(0.0, _value(row.range_rvol_n) * 50.0)), 4)
+
+
+def _missing(value: object) -> bool:
+    return value is None or pd.isna(value)
+
+
+def _value(value: object, default: float = 0.0) -> float:
+    if _missing(value):
+        return default
+    return float(value)
