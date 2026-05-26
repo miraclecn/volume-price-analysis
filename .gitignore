@@ -19,3 +19,6 @@ outputs/
 # Local environment
 .env
 .env.*
+
+# Local worktrees
+.worktrees/
