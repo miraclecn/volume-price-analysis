@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# Project outputs
+outputs/
+*.duckdb
+*.duckdb.wal
+*.db
+*.xlsx
+
+# Local environment
+.env
+.env.*
