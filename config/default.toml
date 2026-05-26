@@ -1,0 +1,55 @@
+[windows]
+base = [10, 20, 30, 60, 120, 240]
+
+[windows.parent_map]
+"10" = [30, 60]
+"20" = [60]
+"30" = [120]
+"60" = [240]
+"120" = [240]
+"240" = [240]
+
+[volume_levels]
+low = 0.7
+normal_upper = 1.2
+mild_high = 1.8
+high = 2.5
+
+[price_position]
+low = 0.25
+mid_low = 0.45
+mid = 0.65
+mid_high = 0.85
+
+[label_thresholds]
+strong_body_ratio = 0.45
+long_shadow_ratio = 0.45
+close_high_position = 0.65
+close_low_position = 0.35
+high_volume_threshold = 1.5
+extreme_volume_threshold = 2.5
+small_move_abs_ret_pct = 0.01
+small_move_range_rvol = 0.9
+big_move_range_rvol = 1.2
+low_volume_threshold = 0.8
+
+[scoring]
+market_weight = 0.25
+sector_weight = 0.30
+stock_weight = 0.35
+resonance_weight = 0.10
+
+[rating]
+A = 80
+B = 65
+C = 50
+D = 35
+
+[sources]
+research_source = "/home/nan/alpha-find-v2/output/research_source.duckdb"
+audited_stock = "/home/nan/alpha-find/output/stock_data_audited.duckdb"
+
+[outputs]
+database = "outputs/vpa.duckdb"
+reports_dir = "outputs/reports"
+validation_dir = "outputs/validation"
