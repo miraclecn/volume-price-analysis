@@ -29,3 +29,18 @@ def test_feature_matrix_schema_roundtrip_aligns_inference_columns(tmp_path):
     assert "cat=__UNKNOWN__" in inferred.columns
     assert matrix.shape[1] == inferred.shape[1]
 
+
+def test_feature_matrix_preserves_seen_unknown_category():
+    train = pd.DataFrame(
+        {
+            "features_json": [
+                json.dumps({"industry_code": "UNKNOWN", "x": 1.0}),
+                json.dumps({"industry_code": "I1", "x": 2.0}),
+            ]
+        }
+    )
+
+    matrix, schema = build_feature_matrix(train, "set", fit=True)
+
+    assert "UNKNOWN" in schema.category_levels["industry_code"]
+    assert matrix["industry_code=UNKNOWN"].sum() == 1.0
