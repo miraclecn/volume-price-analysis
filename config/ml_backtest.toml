@@ -1,0 +1,8 @@
+[backtest]
+initial_cash = 1000000
+execution_price = "next_open"
+slippage_bps = 5
+commission_bps = 3
+stamp_duty_bps = 5
+a_share_lot_size = 100
+allow_fractional_shares = true

@@ -1,0 +1,26 @@
+DEFAULT_FEATURE_WINDOWS = [5, 10, 20, 60, 120, 240]
+DEFAULT_HORIZONS = [1, 5, 10]
+
+FEATURE_SET_BASELINE_A = "baseline_a_ohlcv"
+FEATURE_SET_BASELINE_B = "baseline_b_vpa_numeric"
+FEATURE_SET_VPA_C = "vpa_c_bar_context"
+FEATURE_SET_VPA_D = "vpa_d_sequence"
+FEATURE_SET_VPA_E = "vpa_e_structure_state"
+
+MODEL_TYPE_RANKER = "alpha_ranker"
+MODEL_TYPE_REGRESSOR = "alpha_regressor"
+MODEL_TYPE_RISK = "risk_model"
+
+EXECUTION_NEXT_OPEN = "next_open"
+EXECUTION_NEXT_VWAP = "next_vwap"
+
+LABEL_BASE_FROM_CLOSE = "from_close"
+LABEL_BASE_FROM_NEXT_OPEN = "from_next_open"
+
+DEFAULT_MAIN_HORIZON = 5
+DEFAULT_TARGET_POSITIONS = 12
+DEFAULT_HARD_MAX_POSITIONS = 15
+
+UNKNOWN_CATEGORY = "__UNKNOWN__"
+MISSING_CATEGORY = "__MISSING__"
+

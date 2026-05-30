@@ -1,0 +1,56 @@
+[data]
+alpha_data_db = "outputs/research_source.duckdb"
+vpa_db = "outputs/vpa.duckdb"
+ml_db = "outputs/ml/ml.duckdb"
+normalized_bars_table = "stock_bar_normalized_daily"
+artifact_dir = "outputs/ml/artifacts"
+report_dir = "outputs/ml/reports"
+
+[features]
+windows = [5, 10, 20, 60, 120, 240]
+feature_set_id = "vpa_d_sequence"
+include_structure_state = false
+
+[labels]
+horizons = [1, 5, 10]
+main_horizon = 5
+label_base = "from_next_open"
+risk_drawdown_threshold = -0.05
+
+[split]
+embargo_days = 10
+folds = [
+  { train_start = "2018-01-01", train_end = "2020-12-31", valid_start = "2021-01-01", valid_end = "2021-12-31", test_start = "2022-01-01", test_end = "2022-12-31" }
+]
+
+[model.alpha_ranker]
+objective = "lambdarank"
+metric = "ndcg"
+eval_at = [10, 15]
+lambdarank_truncation_level = 18
+num_leaves = 63
+learning_rate = 0.05
+feature_fraction = 0.8
+bagging_fraction = 0.8
+bagging_freq = 1
+min_data_in_leaf = 300
+lambda_l2 = 5.0
+
+[portfolio]
+target_positions = 12
+hard_max_positions = 15
+max_industry_names = 3
+max_new_entries_per_day = 4
+single_name_min_weight = 0.05
+single_name_max_weight = 0.10
+allow_cash = true
+min_trade_score = 0.80
+
+[backtest]
+initial_cash = 1000000
+execution_price = "next_open"
+slippage_bps = 5
+commission_bps = 3
+stamp_duty_bps = 5
+a_share_lot_size = 100
+allow_fractional_shares = true

@@ -1,0 +1,8 @@
+from __future__ import annotations
+
+from tests.test_ml_feature_mart import test_feature_mart_assembles_features_json_by_feature_set
+
+
+def test_feature_sets_are_executable(tmp_path):
+    test_feature_mart_assembles_features_json_by_feature_set(tmp_path)
+
