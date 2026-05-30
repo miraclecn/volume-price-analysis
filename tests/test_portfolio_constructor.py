@@ -32,3 +32,20 @@ def test_portfolio_filters_selects_and_allocates():
     assert len(targets) <= 3
     assert weighted["target_weight"].sum() <= 1.0
 
+
+def test_portfolio_unknown_industry_uses_independent_limit():
+    data = candidates()
+    data.loc[0:1, "industry_code"] = "UNKNOWN"
+    constraints = PortfolioConstraints(
+        target_positions=4,
+        hard_max_positions=4,
+        max_industry_names=1,
+        max_unknown_industry_names=1,
+        max_new_entries_per_day=4,
+        min_trade_score=0.0,
+    )
+
+    targets = construct_portfolio_targets(data, constraints, "p1")
+
+    assert targets[targets["industry_code"] == "UNKNOWN"]["code"].tolist() == ["a"]
+    assert len(targets[targets["industry_code"] == "I1"]) <= 1

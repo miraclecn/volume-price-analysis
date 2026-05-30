@@ -4,12 +4,15 @@ from dataclasses import dataclass
 
 import pandas as pd
 
+from ml_stock_selector.constants import UNKNOWN_INDUSTRY_CODE
+
 
 @dataclass(frozen=True)
 class PortfolioConstraints:
     target_positions: int = 12
     hard_max_positions: int = 15
     max_industry_names: int = 3
+    max_unknown_industry_names: int = 1
     max_new_entries_per_day: int = 4
     min_adv20_amount: float | None = None
     min_trade_score: float = 0.80
@@ -30,3 +33,8 @@ def apply_hard_filters(candidates: pd.DataFrame, constraints: PortfolioConstrain
         mask &= out["trade_score"].fillna(-1.0) >= constraints.min_trade_score
     return out[mask].copy()
 
+
+def is_unknown_industry(value: object) -> bool:
+    if value is None or pd.isna(value):
+        return True
+    return str(value).strip().upper() == UNKNOWN_INDUSTRY_CODE
