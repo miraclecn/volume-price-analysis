@@ -9,46 +9,27 @@ def _create_source(path: Path) -> None:
     con = duckdb.connect(str(path))
     con.execute(
         """
-        create table daily_bar_pit (
-            security_id varchar,
+        create table stock_bar_normalized_daily (
             trade_date varchar,
+            code varchar,
+            open double,
+            high double,
+            low double,
+            close double,
+            prev_close double,
+            volume double,
+            amount double,
+            turnover_rate double,
             is_st boolean,
-            open_adj double,
-            high_adj double,
-            low_adj double,
-            close_adj double,
-            pre_close double,
-            adj_factor double,
-            volume_shares double,
-            turnover_value_cny double,
-            turnover_rate_pct double
-        )
-        """
-    )
-    con.execute(
-        """
-        create table tradeability_state_daily (
-            security_id varchar,
-            trade_date varchar,
-            is_suspended boolean,
-            up_limit double,
-            down_limit double
-        )
-        """
-    )
-    con.execute(
-        """
-        create table industry_classification_pit (
-            security_id varchar,
+            is_paused boolean,
+            limit_up double,
+            limit_down double,
             industry_code varchar,
-            industry_name varchar,
-            effective_at varchar,
-            removed_at varchar
+            industry_name varchar
         )
         """
     )
     rows = []
-    tradeability = []
     for idx, (date, close) in enumerate(
         [
             ("20240102", 10.0),
@@ -61,25 +42,27 @@ def _create_source(path: Path) -> None:
     ):
         rows.append(
             (
-                "000001.SZ",
                 date,
-                False,
+                "000001.SZ",
                 close - 0.2,
                 close + 0.4,
                 close - 0.5,
                 close,
                 close - 0.1,
-                1.0,
                 1000 + idx * 100,
                 close * (1000 + idx * 100),
                 1.0,
+                False,
+                False,
+                close * 1.1,
+                close * 0.9,
+                "BK001",
+                "Banking",
             )
         )
-        tradeability.append(("000001.SZ", date, False, close * 1.1, close * 0.9))
-    con.executemany("insert into daily_bar_pit values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    con.executemany("insert into tradeability_state_daily values (?, ?, ?, ?, ?)", tradeability)
-    con.execute(
-        "insert into industry_classification_pit values ('000001.SZ', 'BK001', 'Banking', '20200101', null)"
+    con.executemany(
+        "insert into stock_bar_normalized_daily values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
     )
     con.close()
 

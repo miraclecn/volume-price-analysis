@@ -10,6 +10,74 @@ def _create_research_source_fixture(path: Path) -> None:
     con = duckdb.connect(str(path))
     con.execute(
         """
+        create table stock_bar_normalized_daily (
+            trade_date varchar,
+            code varchar,
+            open double,
+            high double,
+            low double,
+            close double,
+            prev_close double,
+            volume double,
+            amount double,
+            turnover_rate double,
+            is_st boolean,
+            is_paused boolean,
+            limit_up double,
+            limit_down double,
+            industry_code varchar,
+            industry_name varchar
+        )
+        """
+    )
+    con.executemany(
+        "insert into stock_bar_normalized_daily values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            (
+                "20240102",
+                "000001.SZ",
+                10.0,
+                11.0,
+                9.8,
+                10.5,
+                9.8,
+                1000,
+                10500,
+                1.2,
+                False,
+                False,
+                11.55,
+                9.45,
+                "BK001",
+                "Banking",
+            ),
+            (
+                "20240103",
+                "000001.SZ",
+                10.5,
+                11.2,
+                10.2,
+                11.0,
+                10.5,
+                1200,
+                13200,
+                1.5,
+                False,
+                False,
+                12.10,
+                9.90,
+                "BK001",
+                "Banking",
+            ),
+        ],
+    )
+    con.close()
+
+
+def _create_legacy_raw_source_fixture(path: Path) -> None:
+    con = duckdb.connect(str(path))
+    con.execute(
+        """
         create table daily_bar_pit (
             security_id varchar,
             trade_date varchar,
@@ -85,6 +153,18 @@ def test_research_source_stock_bars_normalize_pit_adjusted_fields(tmp_path):
     assert rows["limit_up"].tolist() == [11.55, 12.10]
     assert rows["industry_code"].tolist() == ["BK001", "BK001"]
     assert rows["industry_name"].tolist() == ["Banking", "Banking"]
+
+
+def test_research_source_reads_normalized_contract_not_raw_industry_tables(tmp_path):
+    db_path = tmp_path / "legacy.duckdb"
+    _create_legacy_raw_source_fixture(db_path)
+
+    try:
+        ResearchSourceDuckDB(db_path).fetch_stock_bars("2024-01-02", "2024-01-03")
+    except ValueError as error:
+        assert "stock_bar_normalized_daily" in str(error)
+    else:
+        raise AssertionError("legacy raw alpha-data tables should not satisfy VPA input contract")
 
 
 def test_audited_stock_source_can_extend_history_without_upstream_metadata(tmp_path):

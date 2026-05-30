@@ -24,68 +24,41 @@ class ResearchSourceDuckDB:
         start = _compact_date(start_date)
         end = _compact_date(end_date)
         con = duckdb.connect(str(self.path), read_only=True)
-        industry_name_expr = (
-            "industry_name"
-            if _has_column(con, "industry_classification_pit", "industry_name")
-            else "cast(null as varchar) as industry_name"
-        )
-        query = f"""
-            with bars as (
-                select
-                    security_id,
-                    trade_date,
-                    is_st,
-                    open_adj,
-                    high_adj,
-                    low_adj,
-                    close_adj,
-                    pre_close * adj_factor as prev_close,
-                    volume_shares,
-                    turnover_value_cny,
-                    turnover_rate_pct
-                from daily_bar_pit
-            ),
-            industry as (
-                select
-                    security_id,
-                    industry_code,
-                    {industry_name_expr},
-                    effective_at,
-                    removed_at
-                from industry_classification_pit
-            )
+        _validate_normalized_contract(con)
+        query = """
             select
-                substr(b.trade_date, 1, 4) || '-' || substr(b.trade_date, 5, 2) || '-' || substr(b.trade_date, 7, 2) as date,
-                b.security_id as code,
-                b.open_adj as open,
-                b.high_adj as high,
-                b.low_adj as low,
-                b.close_adj as close,
-                b.prev_close,
-                b.volume_shares as volume,
-                b.turnover_value_cny as amount,
-                b.turnover_rate_pct as turnover_rate,
-                coalesce(b.is_st, false) as is_st,
-                coalesce(t.is_suspended, false) as is_paused,
-                t.up_limit as limit_up,
-                t.down_limit as limit_down,
-                i.industry_code,
-                i.industry_name
-            from bars b
-            left join tradeability_state_daily t
-                on t.security_id = b.security_id
-                and t.trade_date = b.trade_date
-            left join industry i
-                on i.security_id = b.security_id
-                and b.trade_date >= i.effective_at
-                and (i.removed_at is null or b.trade_date < i.removed_at)
-            where b.trade_date between ? and ?
-            order by b.security_id, b.trade_date
+                case
+                    when length(cast(trade_date as varchar)) = 8
+                        then substr(cast(trade_date as varchar), 1, 4)
+                            || '-' || substr(cast(trade_date as varchar), 5, 2)
+                            || '-' || substr(cast(trade_date as varchar), 7, 2)
+                    else cast(trade_date as varchar)
+                end as date,
+                code,
+                open,
+                high,
+                low,
+                close,
+                prev_close,
+                volume,
+                amount,
+                turnover_rate,
+                coalesce(is_st, false) as is_st,
+                coalesce(is_paused, false) as is_paused,
+                limit_up,
+                limit_down,
+                industry_code,
+                industry_name
+            from stock_bar_normalized_daily
+            where replace(cast(trade_date as varchar), '-', '') between ? and ?
+            order by code, trade_date
         """
         frame = con.execute(query, [start, end]).fetchdf()
         con.close()
         frame = frame.drop_duplicates(["date", "code"], keep="last")
-        return _nullable_frame(frame[STOCK_BAR_COLUMNS])
+        frame = _nullable_frame(frame[STOCK_BAR_COLUMNS])
+        _validate_core_market_fields(frame)
+        return frame
 
 
 class AuditedStockDuckDB:
@@ -142,16 +115,35 @@ class AuditedStockDuckDB:
         return _nullable_frame(frame[STOCK_BAR_COLUMNS])
 
 
-def _has_column(con: duckdb.DuckDBPyConnection, table_name: str, column_name: str) -> bool:
-    return bool(
-        con.execute(
+def _validate_normalized_contract(con: duckdb.DuckDBPyConnection) -> None:
+    required_columns = set(STOCK_BAR_COLUMNS) - {"date"} | {"trade_date"}
+    tables = {
+        row[0]
+        for row in con.execute(
+            "select table_name from information_schema.tables where table_schema = 'main'"
+        ).fetchall()
+    }
+    if "stock_bar_normalized_daily" not in tables:
+        raise ValueError("Missing tables: stock_bar_normalized_daily")
+    actual_columns = {
+        row[0]
+        for row in con.execute(
             """
-            select 1
+            select column_name
             from information_schema.columns
-            where table_schema = 'main'
-              and table_name = ?
-              and column_name = ?
-            """,
-            [table_name, column_name],
-        ).fetchone()
-    )
+            where table_schema = 'main' and table_name = 'stock_bar_normalized_daily'
+            """
+        ).fetchall()
+    }
+    missing = sorted(required_columns - actual_columns)
+    if missing:
+        raise ValueError(
+            "Missing columns in stock_bar_normalized_daily: " + ", ".join(missing)
+        )
+
+
+def _validate_core_market_fields(frame: pd.DataFrame) -> None:
+    core_columns = ["open", "high", "low", "close", "volume", "amount"]
+    missing = [column for column in core_columns if frame[column].isna().any()]
+    if missing:
+        raise ValueError("Invalid null core market fields: " + ", ".join(missing))

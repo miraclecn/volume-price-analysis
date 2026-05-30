@@ -8,7 +8,7 @@ from vpa_structure_recognizer.data_sources import ResearchSourceDuckDB
 from vpa_structure_recognizer.models import STOCK_BAR_COLUMNS
 
 
-SOURCE_DB = Path("/home/nan/alpha-find-v2/output/research_source.duckdb")
+SOURCE_DB = Path("/home/nan/alpha-data-local/output/research_source.duckdb")
 
 pytestmark = pytest.mark.skipif(
     os.getenv("VPA_RUN_EXTERNAL_DUCKDB_TESTS") != "1",
@@ -19,30 +19,23 @@ pytestmark = pytest.mark.skipif(
 def test_external_research_source_has_required_tables_and_columns():
     con = duckdb.connect(str(SOURCE_DB), read_only=True)
     required = {
-        "daily_bar_pit": {
-            "security_id",
+        "stock_bar_normalized_daily": {
             "trade_date",
-            "open_adj",
-            "high_adj",
-            "low_adj",
-            "close_adj",
-            "volume_shares",
-            "turnover_value_cny",
-            "turnover_rate_pct",
+            "code",
+            "open",
+            "high",
+            "low",
+            "close",
+            "prev_close",
+            "volume",
+            "amount",
+            "turnover_rate",
             "is_st",
-        },
-        "tradeability_state_daily": {
-            "security_id",
-            "trade_date",
-            "is_suspended",
-            "up_limit",
-            "down_limit",
-        },
-        "industry_classification_pit": {
-            "security_id",
+            "is_paused",
+            "limit_up",
+            "limit_down",
             "industry_code",
-            "effective_at",
-            "removed_at",
+            "industry_name",
         },
     }
     for table, columns in required.items():
