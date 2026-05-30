@@ -67,6 +67,47 @@ def test_unknown_industry_stock_has_complete_stock_scope_pipeline_outputs(tmp_pa
     assert "industry_unknown" in state[1]
 
 
+def test_unknown_industry_does_not_reduce_stock_scope_coverage(tmp_path):
+    source_db = tmp_path / "research.duckdb"
+    output_db = tmp_path / "vpa.duckdb"
+    create_unknown_industry_source(source_db)
+
+    run_pipeline(
+        config_path="config/default.toml",
+        start_date="2024-01-02",
+        end_date="2024-01-11",
+        source=str(source_db),
+        output_db=output_db,
+        output_dir=tmp_path / "reports",
+    )
+
+    con = duckdb.connect(str(output_db))
+    try:
+        coverage = {
+            table: con.execute(
+                f"""
+                select scope_id, count(*) as row_count
+                from {table}
+                where scope_type = 'stock'
+                  and scope_id in ('000001.SZ', '000002.SZ')
+                group by scope_id
+                order by scope_id
+                """
+            ).fetchall()
+            for table in [
+                "vpa_features",
+                "vpa_bar_context_labels",
+                "vpa_sequence_stats",
+                "vpa_structure_state",
+            ]
+        }
+    finally:
+        con.close()
+
+    for rows in coverage.values():
+        assert rows[0][1] == rows[1][1]
+
+
 def test_unknown_industry_sector_aggregate_is_observational_group():
     stock_bars = pd.DataFrame(
         [
