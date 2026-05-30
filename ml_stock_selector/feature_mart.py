@@ -12,6 +12,7 @@ from ml_stock_selector.constants import (
     FEATURE_SET_VPA_C,
     FEATURE_SET_VPA_D,
     FEATURE_SET_VPA_E,
+    UNKNOWN_INDUSTRY_CODE,
 )
 from ml_stock_selector.ohlcv_features import build_ohlcv_features
 
@@ -132,11 +133,19 @@ def build_feature_mart(
         "can_sell_next_open",
     ]
     out = wide[["trade_date", "code"]].merge(tradeability[trade_cols], on=["trade_date", "code"], how="left")
-    json_cols = [col for col in wide.columns if col not in {"trade_date", "code"}]
+    json_source = wide.merge(
+        out[["trade_date", "code", "industry_code", "industry_name"]],
+        on=["trade_date", "code"],
+        how="left",
+    )
+    json_source["industry_unknown"] = (
+        json_source["industry_code"].fillna("").astype(str).str.upper() == UNKNOWN_INDUSTRY_CODE
+    )
+    json_cols = [col for col in json_source.columns if col not in {"trade_date", "code"}]
     out["feature_set_id"] = feature_set_id
     out["vpa_data_version"] = "v1"
     out["generated_at"] = generated_at
-    out["features_json"] = wide[json_cols].apply(_json_row, axis=1)
+    out["features_json"] = json_source[json_cols].apply(_json_row, axis=1)
     columns = [
         "trade_date",
         "code",
