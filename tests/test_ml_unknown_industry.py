@@ -215,6 +215,14 @@ def test_daily_signal_marks_unknown_selection_and_limit(tmp_path):
     )
     activate_model(con, artifact.model_id)
 
+    _, selected_targets = generate_daily_signal(
+        con,
+        "2024-01-02",
+        FEATURE_SET_BASELINE_A,
+        1,
+        "p_selected",
+        PortfolioConstraints(target_positions=4, hard_max_positions=4, max_unknown_industry_names=1, min_trade_score=-999.0),
+    )
     predictions, targets = generate_daily_signal(
         con,
         "2024-01-02",
@@ -225,7 +233,9 @@ def test_daily_signal_marks_unknown_selection_and_limit(tmp_path):
     )
     con.close()
 
+    selected_unknown = selected_targets[selected_targets["industry_code"] == "UNKNOWN"]
     unknown_predictions = predictions[predictions["industry_code"] == "UNKNOWN"]
+    assert "industry_unknown" in selected_unknown.iloc[0]["entry_reason"]
     assert not unknown_predictions.empty
     assert "industry_name" in predictions.columns
     assert "unknown_industry_limit" in set(unknown_predictions["exclusion_reason"])
