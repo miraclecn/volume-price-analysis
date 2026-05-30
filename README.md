@@ -26,6 +26,11 @@ earlier than T+1. Feature sets are ordered from `baseline_a_ohlcv` through
 `vpa_e_structure_state`; high-level VPA states are isolated to the final
 ablation set.
 
+VPA-ML consumes alpha-data's UNKNOWN industry standard without repair. Training
+keeps UNKNOWN samples, portfolio construction defaults to at most one UNKNOWN
+holding through `max_unknown_industry_names = 1`, UNKNOWN is not treated as
+untradable by itself, and backtest reports track UNKNOWN exposure separately.
+
 ## Scope
 
 This project does not prepare raw market data. Upstream projects own downloads, qfq adjustment, PIT reference construction, ST/suspension/limit repair, and permanent source marts. This project reads those prepared DuckDB files through read-only adapters, then writes project-owned `vpa_*` derived tables, validation metrics, and reports.
