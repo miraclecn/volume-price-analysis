@@ -1,0 +1,15 @@
+from __future__ import annotations
+
+REQUIRED_ML_TABLES = {
+    "ml_tradeability_daily",
+    "ml_feature_mart_daily",
+    "ml_labels_daily",
+    "ml_model_registry",
+    "ml_predictions_daily",
+    "ml_portfolio_targets_daily",
+    "ml_backtest_orders",
+    "ml_backtest_positions",
+    "ml_backtest_nav",
+    "ml_backtest_metrics",
+}
+

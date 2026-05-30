@@ -2,6 +2,30 @@
 
 This repository implements the A-share multi-level volume-price structure recognizer described in `A股多层级量价结构识别系统_SPEC.md`.
 
+## ML Stock Selector Subsystem
+
+`ml_stock_selector` is a downstream ML subsystem. It consumes alpha-data
+`stock_bar_normalized_daily` plus this repository's `vpa_*` tables, and writes
+only `ml_*` tables and model artifacts under `outputs/ml/`.
+
+The intended command sequence is:
+
+```bash
+python scripts/run_alpha_data_contract_check.py --db outputs/research_source.duckdb
+python scripts/run_ml_schema_check.py --vpa-db outputs/vpa.duckdb
+python scripts/run_ml_feature_mart.py --config config/ml_default.toml
+python scripts/build_ml_labels.py --config config/ml_default.toml
+python scripts/train_ml_models.py --config config/ml_default.toml
+python scripts/run_ml_batch_predict.py --config config/ml_default.toml
+python scripts/run_ml_backtest.py --config config/ml_default.toml
+python scripts/run_ml_daily_signal.py --config config/ml_default.toml --as-of-date YYYY-MM-DD
+```
+
+Backtests and daily signals use T-day information for decisions and execute no
+earlier than T+1. Feature sets are ordered from `baseline_a_ohlcv` through
+`vpa_e_structure_state`; high-level VPA states are isolated to the final
+ablation set.
+
 ## Scope
 
 This project does not prepare raw market data. Upstream projects own downloads, qfq adjustment, PIT reference construction, ST/suspension/limit repair, and permanent source marts. This project reads those prepared DuckDB files through read-only adapters, then writes project-owned `vpa_*` derived tables, validation metrics, and reports.

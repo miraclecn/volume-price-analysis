@@ -1,0 +1,166 @@
+create table if not exists ml_tradeability_daily (
+    trade_date varchar not null,
+    code varchar not null,
+    industry_code varchar,
+    industry_name varchar,
+    is_st boolean,
+    is_paused boolean,
+    limit_up double,
+    limit_down double,
+    open double,
+    high double,
+    low double,
+    close double,
+    prev_close double,
+    amount double,
+    turnover_rate double,
+    adv20_amount double,
+    next_trade_date varchar,
+    next_open double,
+    next_limit_up double,
+    next_limit_down double,
+    next_is_paused boolean,
+    can_buy_next_open boolean,
+    can_sell_next_open boolean,
+    generated_at varchar,
+    primary key (trade_date, code)
+);
+
+create table if not exists ml_feature_mart_daily (
+    trade_date varchar not null,
+    code varchar not null,
+    feature_set_id varchar not null,
+    vpa_data_version varchar,
+    generated_at varchar not null,
+    industry_code varchar,
+    industry_name varchar,
+    is_st boolean,
+    is_paused boolean,
+    limit_up double,
+    limit_down double,
+    adv20_amount double,
+    can_buy_next_open boolean,
+    can_sell_next_open boolean,
+    features_json varchar,
+    primary key (trade_date, code, feature_set_id)
+);
+
+create table if not exists ml_labels_daily (
+    trade_date varchar not null,
+    code varchar not null,
+    horizon_d integer not null,
+    label_base varchar not null,
+    base_price double,
+    future_ret double,
+    future_max_gain double,
+    future_max_drawdown double,
+    future_score double,
+    future_rank_pct double,
+    rank_label integer,
+    risk_label integer,
+    outperform_market boolean,
+    generated_at varchar not null,
+    primary key (trade_date, code, horizon_d, label_base)
+);
+
+create table if not exists ml_model_registry (
+    model_id varchar not null,
+    model_type varchar not null,
+    feature_set_id varchar not null,
+    label_name varchar not null,
+    label_base varchar not null,
+    horizon_d integer not null,
+    train_start varchar,
+    train_end varchar,
+    valid_start varchar,
+    valid_end varchar,
+    test_start varchar,
+    test_end varchar,
+    params_json varchar,
+    metrics_json varchar,
+    feature_schema_uri varchar,
+    artifact_uri varchar not null,
+    is_active boolean,
+    activated_at varchar,
+    deactivated_at varchar,
+    created_at varchar not null,
+    notes varchar,
+    primary key (model_id)
+);
+
+create table if not exists ml_predictions_daily (
+    trade_date varchar not null,
+    code varchar not null,
+    model_id varchar not null,
+    horizon_d integer not null,
+    alpha_score double,
+    alpha_rank_pct double,
+    reg_score double,
+    risk_score double,
+    risk_rank_pct double,
+    context_score double,
+    liquidity_score double,
+    relative_strength_pct double,
+    resonance_pct double,
+    penalty_score double,
+    trade_score double,
+    feature_set_id varchar not null,
+    generated_at varchar not null,
+    primary key (trade_date, code, model_id, horizon_d)
+);
+
+create table if not exists ml_portfolio_targets_daily (
+    trade_date varchar not null,
+    portfolio_id varchar not null,
+    code varchar not null,
+    target_weight double,
+    rank_n integer,
+    trade_score double,
+    entry_reason varchar,
+    generated_at varchar,
+    primary key (trade_date, portfolio_id, code)
+);
+
+create table if not exists ml_backtest_orders (
+    run_id varchar,
+    sim_date varchar not null,
+    decision_date varchar not null,
+    code varchar not null,
+    side varchar not null,
+    qty double,
+    target_weight double,
+    order_px_ref varchar,
+    fill_px double,
+    status varchar not null,
+    reason varchar,
+    primary key (sim_date, decision_date, code, side)
+);
+
+create table if not exists ml_backtest_positions (
+    run_id varchar,
+    sim_date varchar not null,
+    code varchar not null,
+    position_qty double,
+    market_value double,
+    weight double,
+    primary key (sim_date, code)
+);
+
+create table if not exists ml_backtest_nav (
+    run_id varchar,
+    sim_date varchar not null,
+    nav double not null,
+    cash double not null,
+    gross_exposure double not null,
+    turnover double not null,
+    primary key (sim_date)
+);
+
+create table if not exists ml_backtest_metrics (
+    run_id varchar not null,
+    metric_name varchar not null,
+    metric_value double,
+    segment varchar not null,
+    primary key (run_id, metric_name, segment)
+);
+

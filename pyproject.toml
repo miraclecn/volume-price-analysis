@@ -3,6 +3,14 @@ name = "vpa-structure-recognizer"
 version = "0.1.0"
 description = "A-share multi-level volume-price structure recognizer"
 requires-python = ">=3.11"
+dependencies = [
+    "duckdb",
+    "lightgbm",
+    "numpy",
+    "openpyxl",
+    "pandas",
+    "scikit-learn",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
