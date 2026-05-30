@@ -30,10 +30,18 @@ ablation set.
 
 This project does not prepare raw market data. Upstream projects own downloads, qfq adjustment, PIT reference construction, ST/suspension/limit repair, and permanent source marts. This project reads those prepared DuckDB files through read-only adapters, then writes project-owned `vpa_*` derived tables, validation metrics, and reports.
 
-Default temporary source paths are configured in `config/default.toml`:
+VPA consumes alpha-data's normalized stock-bar contract from
+`stock_bar_normalized_daily`. Industry normalization belongs to alpha-data:
+when alpha-data cannot classify a stock it emits `industry_code = "UNKNOWN"`
+and `industry_name = "UNKNOWN"`. VPA keeps those stocks in stock-scope
+analysis, may build an observational `UNKNOWN` sector aggregate, and excludes
+`UNKNOWN` from real industry strength context by assigning affected stocks a
+neutral sector score with an `industry_unknown` risk flag. VPA does not read or
+repair alpha-data's raw industry classification tables.
 
-- `/home/nan/alpha-find-v2/output/research_source.duckdb`
-- `/home/nan/alpha-find/output/stock_data_audited.duckdb`
+Default source path is configured in `config/default.toml`:
+
+- `/home/nan/alpha-data-local/output/research_source.duckdb`
 
 ## Commands
 
@@ -50,7 +58,7 @@ python scripts/run_vpa_structure.py \
   --config config/default.toml \
   --start-date 2024-01-01 \
   --end-date 2024-01-31 \
-  --source /home/nan/alpha-find-v2/output/research_source.duckdb \
+  --source /home/nan/alpha-data-local/output/research_source.duckdb \
   --output-db outputs/vpa_smoke.duckdb \
   --output-dir outputs/reports
 ```
