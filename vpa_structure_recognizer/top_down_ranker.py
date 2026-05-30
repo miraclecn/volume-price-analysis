@@ -3,6 +3,8 @@ from __future__ import annotations
 import pandas as pd
 
 
+UNKNOWN_INDUSTRY_CODES = {"UNKNOWN", "UNKNOWN_SECTOR", ""}
+
 STATE_SCORES = {
     "HEALTHY_UPTREND": 95.0,
     "POSSIBLE_ACCUMULATION": 75.0,
@@ -45,6 +47,7 @@ def rank_top_down(
         sector_scores = {
             row.scope_id: _state_score(row.final_state)
             for row in group[group["scope_type"] == "sector"].itertuples(index=False)
+            if not _is_unknown_industry(row.scope_id)
         }
         for row in group.itertuples(index=False):
             row_dict = row._asdict()
@@ -64,7 +67,12 @@ def rank_top_down(
                 )
             else:
                 sector_id = stock_sector_map.get(row.scope_id)
-                sector_score = sector_scores.get(sector_id, 50.0)
+                industry_unknown = _is_unknown_industry(sector_id)
+                sector_score = 50.0 if industry_unknown else sector_scores.get(sector_id, 50.0)
+                if industry_unknown:
+                    row_dict["risk_flags"] = _append_flag(
+                        row_dict.get("risk_flags"), "industry_unknown"
+                    )
                 resonance = 100.0 if market_score > 60 and sector_score > 60 and self_score > 60 else 0.0
                 final_score = (
                     market_score * weights["market"]
@@ -105,6 +113,12 @@ def _market_score(group: pd.DataFrame) -> float:
 
 def _state_score(final_state: str) -> float:
     return STATE_SCORES.get(final_state, 50.0)
+
+
+def _is_unknown_industry(value: object) -> bool:
+    if value is None or pd.isna(value):
+        return True
+    return str(value).strip().upper() in UNKNOWN_INDUSTRY_CODES
 
 
 def _apply_scores(
