@@ -37,6 +37,15 @@ class LoadedAlphaRanker:
         return self.model.predict_matrix(matrix)
 
 
+@dataclass
+class LightGBMRankerAdapter:
+    model: object
+    feature_columns: list[str]
+
+    def predict_matrix(self, matrix: pd.DataFrame) -> pd.Series:
+        return pd.Series(self.model.predict(matrix[self.feature_columns]), index=matrix.index)
+
+
 def train_alpha_ranker(
     samples: pd.DataFrame,
     feature_set_id: str,
@@ -107,12 +116,4 @@ def _train_lightgbm_ranker(matrix: pd.DataFrame, target: pd.Series, samples: pd.
     )
     ranker.fit(train_x, train_y.astype(int), group=group)
 
-    class LightGBMAdapter:
-        def __init__(self, model, feature_columns: list[str]) -> None:
-            self.model = model
-            self.feature_columns = feature_columns
-
-        def predict_matrix(self, matrix: pd.DataFrame) -> pd.Series:
-            return pd.Series(self.model.predict(matrix[self.feature_columns]), index=matrix.index)
-
-    return LightGBMAdapter(ranker, list(matrix.columns))
+    return LightGBMRankerAdapter(ranker, list(matrix.columns))

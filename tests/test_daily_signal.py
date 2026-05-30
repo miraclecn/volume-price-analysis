@@ -33,6 +33,7 @@ def test_daily_signal_loads_active_model_and_writes_predictions(tmp_path):
 
     assert loaded.model_id == artifact.model_id
     assert not predictions.empty
+    assert "industry_name" in predictions.columns
+    assert "entry_reason" in targets.columns
     assert len(targets) <= 15
     con.close()
-
