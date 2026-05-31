@@ -4,11 +4,14 @@ import pandas as pd
 
 from ml_stock_selector.backtest.metrics import (
     annualized_return,
+    cash_days_ratio,
     max_drawdown,
     ndcg_at_k,
+    pool_size_metrics,
     rank_ic,
     unknown_industry_daily_exposure,
 )
+from ml_stock_selector.backtest.reports import prediction_report_metrics
 
 
 def test_backtest_metrics_match_small_fixture():
@@ -19,6 +22,7 @@ def test_backtest_metrics_match_small_fixture():
     assert annualized_return(nav) != 0
     assert rank_ic(preds, "alpha_score", "future_score") > 0
     assert ndcg_at_k(preds, "alpha_score", "future_score", 2) > 0
+    assert cash_days_ratio(pd.DataFrame({"gross_exposure": [0.0, 0.5, 0.0]})) == 2 / 3
 
 
 def test_unknown_industry_daily_exposure_counts_positions_and_weight():
@@ -35,3 +39,31 @@ def test_unknown_industry_daily_exposure_counts_positions_and_weight():
 
     assert exposure["unknown_industry_position_count"].tolist() == [1]
     assert exposure["unknown_industry_weight"].tolist() == [0.2]
+
+
+def test_prediction_report_metrics_summarize_v2_scores():
+    predictions = pd.DataFrame(
+        {
+            "model_id": ["m1", "m1", "m2"],
+            "score_version": ["v2_three_model", "v2_three_model", "v1_legacy"],
+            "active_rank_pct": [0.8, 0.6, None],
+            "risk_prob": [0.1, 0.3, None],
+        }
+    )
+
+    metrics = prediction_report_metrics(predictions)
+
+    assert metrics["prediction_model_count"] == 2.0
+    assert metrics["prediction_v2_three_model_rows"] == 2.0
+    assert metrics["prediction_active_rank_pct_mean"] == 0.7
+    assert metrics["prediction_risk_prob_mean"] == 0.2
+
+
+def test_pool_size_metrics_counts_candidate_and_core_rows():
+    metrics = pool_size_metrics(
+        pd.DataFrame({"code": ["a", "b", "c"]}),
+        pd.DataFrame({"code": ["a"]}),
+    )
+
+    assert metrics["candidate_pool_size"] == 3.0
+    assert metrics["core_pool_size"] == 1.0

@@ -23,6 +23,20 @@ def annualized_return(nav: pd.DataFrame, nav_col: str = "nav", periods_per_year:
     return float((1.0 + returns.mean()) ** periods_per_year - 1.0)
 
 
+def cash_days_ratio(nav: pd.DataFrame, exposure_col: str = "gross_exposure") -> float:
+    if nav.empty or exposure_col not in nav:
+        return 0.0
+    exposure = pd.to_numeric(nav[exposure_col], errors="coerce").fillna(0.0)
+    return float((exposure <= 0.0).mean())
+
+
+def pool_size_metrics(candidate_pool: pd.DataFrame, core_pool: pd.DataFrame) -> dict[str, float]:
+    return {
+        "candidate_pool_size": float(len(candidate_pool)),
+        "core_pool_size": float(len(core_pool)),
+    }
+
+
 def rank_ic(frame: pd.DataFrame, pred_col: str, label_col: str) -> float:
     return float(frame[pred_col].rank().corr(frame[label_col].rank()))
 

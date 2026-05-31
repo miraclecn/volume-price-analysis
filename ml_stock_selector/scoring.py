@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
+from ml_stock_selector.constants import SCORE_VERSION_THREE_MODEL
 from ml_stock_selector.models.calibrator import cross_sectional_percentile
 
 
@@ -57,3 +58,32 @@ def score_candidates(predictions: pd.DataFrame) -> pd.DataFrame:
     )
     return out.sort_values(["trade_date", "trade_score", "code"], ascending=[True, False, True]).reset_index(drop=True)
 
+
+def score_candidates_v2(predictions: pd.DataFrame, overlay_context_weight: float = 0.0) -> pd.DataFrame:
+    out = predictions.copy()
+    for raw_col, rank_col in {
+        "absolute_score": "absolute_rank_pct",
+        "active_score": "active_rank_pct",
+        "risk_prob": "risk_rank_pct",
+    }.items():
+        if rank_col not in out or out[rank_col].isna().any():
+            out[rank_col] = cross_sectional_percentile(out, raw_col) if raw_col in out else 0.5
+    if "liquidity_score_pct" not in out:
+        out = add_liquidity_score(out)
+    if "context_score_pct" not in out:
+        out = add_context_score(out)
+    if "penalty_score" not in out:
+        out["penalty_score"] = 0.0
+    out["core_score"] = (
+        0.50 * out["absolute_rank_pct"]
+        + 0.35 * out["active_rank_pct"]
+        - 0.15 * out["risk_rank_pct"]
+    )
+    out["trade_score_v2"] = (
+        out["core_score"]
+        + 0.10 * out["liquidity_score_pct"]
+        + overlay_context_weight * out["context_score_pct"]
+        - out["penalty_score"]
+    )
+    out["score_version"] = SCORE_VERSION_THREE_MODEL
+    return out.sort_values(["trade_date", "trade_score_v2", "code"], ascending=[True, False, True]).reset_index(drop=True)

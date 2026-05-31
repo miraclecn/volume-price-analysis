@@ -57,10 +57,44 @@ create table if not exists ml_labels_daily (
     future_score double,
     future_rank_pct double,
     rank_label integer,
+    absolute_ret double,
+    absolute_rank_pct double,
+    absolute_label integer,
+    market_ret double,
+    industry_ret double,
+    market_excess_ret double,
+    industry_excess_ret double,
+    active_score double,
+    active_rank_pct double,
+    active_label integer,
+    benchmark_missing_market boolean,
+    benchmark_missing_industry boolean,
+    benchmark_peer_count integer,
     risk_label integer,
     outperform_market boolean,
     generated_at varchar not null,
     primary key (trade_date, code, horizon_d, label_base)
+);
+
+create table if not exists ml_market_benchmark_daily (
+    trade_date varchar not null,
+    horizon_d integer not null,
+    label_base varchar not null,
+    market_ret double,
+    benchmark_peer_count integer,
+    generated_at varchar,
+    primary key (trade_date, horizon_d, label_base)
+);
+
+create table if not exists ml_industry_benchmark_daily (
+    trade_date varchar not null,
+    industry_code varchar not null,
+    horizon_d integer not null,
+    label_base varchar not null,
+    industry_ret double,
+    benchmark_peer_count integer,
+    generated_at varchar,
+    primary key (trade_date, industry_code, horizon_d, label_base)
 );
 
 create table if not exists ml_model_registry (
@@ -95,15 +129,26 @@ create table if not exists ml_predictions_daily (
     horizon_d integer not null,
     alpha_score double,
     alpha_rank_pct double,
+    absolute_score double,
+    absolute_rank_pct double,
+    absolute_zscore double,
     reg_score double,
+    active_score double,
+    active_rank_pct double,
+    active_zscore double,
     risk_score double,
+    risk_prob double,
     risk_rank_pct double,
+    risk_zscore double,
     context_score double,
     liquidity_score double,
     relative_strength_pct double,
     resonance_pct double,
     penalty_score double,
+    core_score double,
     trade_score double,
+    trade_score_v2 double,
+    score_version varchar,
     feature_set_id varchar not null,
     generated_at varchar not null,
     primary key (trade_date, code, model_id, horizon_d)
@@ -163,4 +208,3 @@ create table if not exists ml_backtest_metrics (
     segment varchar not null,
     primary key (run_id, metric_name, segment)
 );
-

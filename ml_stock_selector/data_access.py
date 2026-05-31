@@ -60,3 +60,52 @@ def load_normalized_stock_bars(
         con.close()
     return frame.astype(object).where(pd.notna(frame), None)
 
+
+def load_optional_market_benchmark_returns(
+    alpha_data_db_path: str,
+    start_date: str,
+    end_date: str,
+    table_name: str = "market_benchmark_daily",
+) -> pd.DataFrame:
+    return _load_optional_benchmark_table(alpha_data_db_path, table_name, start_date, end_date)
+
+
+def load_optional_industry_benchmark_returns(
+    alpha_data_db_path: str,
+    start_date: str,
+    end_date: str,
+    table_name: str = "industry_benchmark_daily",
+) -> pd.DataFrame:
+    return _load_optional_benchmark_table(alpha_data_db_path, table_name, start_date, end_date)
+
+
+def _load_optional_benchmark_table(
+    alpha_data_db_path: str,
+    table_name: str,
+    start_date: str,
+    end_date: str,
+) -> pd.DataFrame:
+    con = duckdb.connect(alpha_data_db_path, read_only=True)
+    try:
+        exists = con.execute(
+            """
+            select count(*)
+            from information_schema.tables
+            where table_schema = 'main' and table_name = ?
+            """,
+            [table_name],
+        ).fetchone()[0]
+        if not exists:
+            return pd.DataFrame()
+        frame = con.execute(
+            f"""
+            select *
+            from {table_name}
+            where trade_date between ? and ?
+            order by trade_date
+            """,
+            [start_date, end_date],
+        ).fetchdf()
+    finally:
+        con.close()
+    return frame.astype(object).where(pd.notna(frame), None)

@@ -31,6 +31,7 @@ def main() -> None:
         str(config.features["feature_set_id"]),
         [int(value) for value in config.features["windows"]],
         tradeability,
+        exclude_industry_metadata_from_features_json=bool(config.ml_v2["exclude_industry_metadata_from_features_json"]),
     )
     con = init_ml_db(str(config.data["ml_db"]))
     try:

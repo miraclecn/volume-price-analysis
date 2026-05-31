@@ -4,7 +4,7 @@ import pandas as pd
 
 from ml_stock_selector.portfolio.allocator import allocate_weights
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints, apply_hard_filters
-from ml_stock_selector.portfolio.constructor import construct_portfolio_targets
+from ml_stock_selector.portfolio.constructor import construct_portfolio_targets, construct_portfolio_targets_v2
 
 
 def candidates() -> pd.DataFrame:
@@ -49,3 +49,48 @@ def test_portfolio_unknown_industry_uses_independent_limit():
 
     assert targets[targets["industry_code"] == "UNKNOWN"]["code"].tolist() == ["a"]
     assert len(targets[targets["industry_code"] == "I1"]) <= 1
+
+
+def test_v2_portfolio_can_return_empty_when_core_pool_missing():
+    data = candidates().assign(
+        absolute_rank_pct=[0.75, 0.74, 0.73, 0.72, 0.71],
+        active_rank_pct=[0.74, 0.73, 0.72, 0.71, 0.70],
+        risk_rank_pct=[0.50, 0.50, 0.50, 0.50, 0.50],
+        trade_score_v2=[0.82, 0.81, 0.80, 0.79, 0.78],
+    )
+    constraints = PortfolioConstraints(target_positions=3, hard_max_positions=3, min_trade_score=0.0, candidate_min_count=1)
+
+    targets = construct_portfolio_targets_v2(data, constraints, "p1")
+
+    assert targets.empty
+
+
+def test_v2_portfolio_uses_core_pool_and_unknown_limit():
+    data = pd.DataFrame(
+        {
+            "trade_date": ["2024-01-02"] * 4,
+            "code": ["u1", "u2", "i1", "i2"],
+            "industry_code": ["UNKNOWN", "UNKNOWN", "I1", "I2"],
+            "trade_score_v2": [0.95, 0.94, 0.93, 0.92],
+            "absolute_rank_pct": [0.90, 0.89, 0.88, 0.87],
+            "active_rank_pct": [0.90, 0.89, 0.88, 0.87],
+            "risk_rank_pct": [0.10, 0.10, 0.10, 0.10],
+            "is_st": [False] * 4,
+            "is_paused": [False] * 4,
+            "can_buy_next_open": [True] * 4,
+            "adv20_amount": [100.0] * 4,
+        }
+    )
+    constraints = PortfolioConstraints(
+        target_positions=4,
+        hard_max_positions=4,
+        max_unknown_industry_names=1,
+        max_new_entries_per_day=4,
+        min_trade_score=0.0,
+        candidate_min_count=1,
+    )
+
+    targets = construct_portfolio_targets_v2(data, constraints, "p1")
+
+    assert targets[targets["industry_code"] == "UNKNOWN"]["code"].tolist() == ["u1"]
+    assert "u2" not in set(targets["code"])

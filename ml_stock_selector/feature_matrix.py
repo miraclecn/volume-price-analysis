@@ -6,7 +6,7 @@ import json
 
 import pandas as pd
 
-from ml_stock_selector.constants import MISSING_CATEGORY, UNKNOWN_CATEGORY
+from ml_stock_selector.constants import FEATURE_SCHEMA_V2_NO_INDUSTRY, MISSING_CATEGORY, UNKNOWN_CATEGORY
 
 
 @dataclass(frozen=True)
@@ -25,10 +25,13 @@ def build_feature_matrix(
     feature_set_id: str,
     schema: FeatureSchema | None = None,
     fit: bool = False,
+    deny_industry: bool = False,
 ) -> tuple[pd.DataFrame, FeatureSchema]:
     raw = _expand_json(feature_mart_or_samples["features_json"])
+    if deny_industry or (schema is not None and schema.schema_version == FEATURE_SCHEMA_V2_NO_INDUSTRY):
+        raw = _drop_industry_features(raw)
     if fit:
-        schema = _fit_schema(raw, feature_set_id)
+        schema = _fit_schema(raw, feature_set_id, schema_version=FEATURE_SCHEMA_V2_NO_INDUSTRY if deny_industry else "v1")
     if schema is None:
         raise ValueError("schema is required when fit=False")
     matrix = pd.DataFrame(index=raw.index)
@@ -60,7 +63,7 @@ def _expand_json(series: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(rows, index=series.index)
 
 
-def _fit_schema(raw: pd.DataFrame, feature_set_id: str) -> FeatureSchema:
+def _fit_schema(raw: pd.DataFrame, feature_set_id: str, schema_version: str = "v1") -> FeatureSchema:
     numeric_columns = []
     categorical_columns = []
     for col in raw.columns:
@@ -85,5 +88,14 @@ def _fit_schema(raw: pd.DataFrame, feature_set_id: str) -> FeatureSchema:
         output_columns=output_columns,
         category_levels=category_levels,
         fill_values={col: 0.0 for col in numeric_columns},
+        schema_version=schema_version,
     )
 
+
+def _drop_industry_features(raw: pd.DataFrame) -> pd.DataFrame:
+    denied = {
+        col
+        for col in raw.columns
+        if col in {"industry_code", "industry_name", "industry_unknown"} or col.startswith("industry_")
+    }
+    return raw.drop(columns=sorted(denied), errors="ignore")
