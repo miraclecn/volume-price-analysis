@@ -53,10 +53,11 @@ def train_alpha_ranker(
     label_base: str,
     horizon_d: int,
     artifact_dir: Path | str,
+    deny_industry: bool = False,
 ) -> ModelArtifact:
     artifact_dir = Path(artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
-    matrix, schema = build_feature_matrix(samples, feature_set_id, fit=True)
+    matrix, schema = build_feature_matrix(samples, feature_set_id, fit=True, deny_industry=deny_industry)
     target = pd.to_numeric(samples[label_name], errors="coerce").fillna(0.0)
     model = _train_lightgbm_ranker(matrix, target, samples) or LinearFallbackModel(
         list(matrix.columns),
@@ -74,7 +75,12 @@ def train_alpha_ranker(
         train_corr = float(preds.corr(target))
     else:
         train_corr = 0.0
-    metrics = {"train_corr": train_corr}
+    metrics = {
+        "train_corr": train_corr,
+        "train_rank_ic": _rank_ic(samples, preds, label_name),
+        "eval_at_10": 10.0,
+        "eval_at_15": 15.0,
+    }
     return ModelArtifact(model_id, MODEL_TYPE_RANKER, feature_set_id, label_name, label_base, horizon_d, schema_path, artifact_path, artifact_dir, metrics)
 
 
@@ -114,6 +120,34 @@ def _train_lightgbm_ranker(matrix: pd.DataFrame, target: pd.Series, samples: pd.
         min_data_in_leaf=1,
         verbose=-1,
     )
-    ranker.fit(train_x, train_y.astype(int), group=group)
+    try:
+        ranker.fit(train_x, train_y.astype(int), group=group, eval_at=[10, 15])
+    except Exception:
+        return None
 
     return LightGBMRankerAdapter(ranker, list(matrix.columns))
+
+
+def _rank_ic(samples: pd.DataFrame, preds: pd.Series, label_name: str) -> float:
+    target_name = {
+        "rank_label": "future_score",
+        "absolute_label": "absolute_ret",
+        "active_label": "active_score",
+    }.get(label_name, label_name)
+    if target_name not in samples:
+        return 0.0
+    frame = samples[["trade_date"]].copy()
+    frame["pred"] = list(preds)
+    frame["target"] = pd.to_numeric(samples[target_name], errors="coerce")
+    values = []
+    for _, group in frame.dropna(subset=["pred", "target"]).groupby("trade_date", sort=False):
+        if len(group) < 2:
+            continue
+        pred_rank = group["pred"].rank()
+        target_rank = group["target"].rank()
+        if float(pred_rank.std(ddof=0) or 0.0) == 0.0 or float(target_rank.std(ddof=0) or 0.0) == 0.0:
+            continue
+        corr = pred_rank.corr(target_rank)
+        if not pd.isna(corr):
+            values.append(float(corr))
+    return float(sum(values) / len(values)) if values else 0.0

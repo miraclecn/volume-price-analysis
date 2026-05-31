@@ -14,6 +14,25 @@ class MLConfig:
     model: dict[str, object]
     portfolio: dict[str, object]
     backtest: dict[str, object]
+    ml_v2: dict[str, object]
+
+
+DEFAULT_ML_V2_CONFIG: dict[str, object] = {
+    "exclude_industry_metadata_from_features_json": False,
+    "feature_matrix_v2_deny_industry": False,
+    "labels_v2_enabled": False,
+    "active_ranker_enabled": False,
+    "risk_model_v2_enabled": False,
+    "trade_score_v2_enabled": False,
+    "daily_signal_v2_enabled": False,
+    "candidate_absolute_min_rank_pct": 0.70,
+    "candidate_active_min_rank_pct": 0.70,
+    "candidate_risk_max_rank_pct": 0.60,
+    "core_absolute_min_rank_pct": 0.80,
+    "core_active_min_rank_pct": 0.75,
+    "core_risk_max_rank_pct": 0.35,
+    "core_min_trade_score": 0.80,
+}
 
 
 def load_ml_config(path: Path | str) -> MLConfig:
@@ -30,6 +49,7 @@ def load_ml_config(path: Path | str) -> MLConfig:
         model=raw["model"],
         portfolio=raw["portfolio"],
         backtest=raw["backtest"],
+        ml_v2={**DEFAULT_ML_V2_CONFIG, **raw.get("ml_v2", {})},
     )
     _validate_config(config)
     return config
@@ -43,4 +63,3 @@ def _validate_config(config: MLConfig) -> None:
         raise ValueError("single_name_min_weight cannot exceed single_name_max_weight")
     if config.backtest["a_share_lot_size"] <= 0:
         raise ValueError("a_share_lot_size must be positive")
-

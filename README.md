@@ -31,6 +31,16 @@ keeps UNKNOWN samples, portfolio construction defaults to at most one UNKNOWN
 holding through `max_unknown_industry_names = 1`, UNKNOWN is not treated as
 untradable by itself, and backtest reports track UNKNOWN exposure separately.
 
+The optional v2 ML path uses three model roles: Absolute Ranker
+(`absolute_label`), Active Ranker (`active_label` from market/industry excess
+returns), and Risk Model (`risk_label` probability). All v2 behavior is gated by
+`[ml_v2]` flags in `config/ml_default.toml`, and the default config currently
+opens those flags. In v2, industry code/name are retained as
+metadata for reports and portfolio constraints, but are excluded from
+`features_json` and denied again in `feature_matrix` so they cannot become model
+features. Market and industry benchmark labels are computed locally from
+`stock_bar_normalized_daily` unless upstream benchmark views are available later.
+
 ## Scope
 
 This project does not prepare raw market data. Upstream projects own downloads, qfq adjustment, PIT reference construction, ST/suspension/limit repair, and permanent source marts. This project reads those prepared DuckDB files through read-only adapters, then writes project-owned `vpa_*` derived tables, validation metrics, and reports.

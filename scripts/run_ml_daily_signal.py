@@ -25,6 +25,7 @@ def main() -> None:
             str(config.features["feature_set_id"]),
             int(config.labels["main_horizon"]),
             args.portfolio_id,
+            use_v2=bool(config.ml_v2["daily_signal_v2_enabled"]),
         )
     finally:
         con.close()

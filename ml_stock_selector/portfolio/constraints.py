@@ -17,9 +17,17 @@ class PortfolioConstraints:
     min_adv20_amount: float | None = None
     min_trade_score: float = 0.80
     allow_cash: bool = True
+    candidate_min_count: int = 5
+    candidate_absolute_min_rank_pct: float = 0.70
+    candidate_active_min_rank_pct: float = 0.70
+    candidate_risk_max_rank_pct: float = 0.60
+    core_absolute_min_rank_pct: float = 0.80
+    core_active_min_rank_pct: float = 0.75
+    core_risk_max_rank_pct: float = 0.35
+    core_min_trade_score: float = 0.80
 
 
-def apply_hard_filters(candidates: pd.DataFrame, constraints: PortfolioConstraints) -> pd.DataFrame:
+def apply_hard_filters(candidates: pd.DataFrame, constraints: PortfolioConstraints, score_column: str | None = "trade_score") -> pd.DataFrame:
     out = candidates.copy()
     mask = pd.Series(True, index=out.index)
     for column in ["is_st", "is_paused"]:
@@ -29,8 +37,8 @@ def apply_hard_filters(candidates: pd.DataFrame, constraints: PortfolioConstrain
         mask &= out["can_buy_next_open"].fillna(False).astype(bool)
     if constraints.min_adv20_amount is not None and "adv20_amount" in out:
         mask &= out["adv20_amount"].fillna(0.0) >= constraints.min_adv20_amount
-    if "trade_score" in out:
-        mask &= out["trade_score"].fillna(-1.0) >= constraints.min_trade_score
+    if score_column and score_column in out:
+        mask &= out[score_column].fillna(-1.0) >= constraints.min_trade_score
     return out[mask].copy()
 
 

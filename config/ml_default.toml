@@ -54,3 +54,19 @@ commission_bps = 3
 stamp_duty_bps = 5
 a_share_lot_size = 100
 allow_fractional_shares = true
+
+[ml_v2]
+exclude_industry_metadata_from_features_json = true
+feature_matrix_v2_deny_industry = true
+labels_v2_enabled = true
+active_ranker_enabled = true
+risk_model_v2_enabled = true
+trade_score_v2_enabled = true
+daily_signal_v2_enabled = true
+candidate_absolute_min_rank_pct = 0.70
+candidate_active_min_rank_pct = 0.70
+candidate_risk_max_rank_pct = 0.60
+core_absolute_min_rank_pct = 0.80
+core_active_min_rank_pct = 0.75
+core_risk_max_rank_pct = 0.35
+core_min_trade_score = 0.80

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from ml_stock_selector.constants import MODEL_TYPE_RANKER
+from ml_stock_selector.constants import MODEL_TYPE_ACTIVE_RANKER, MODEL_TYPE_RANKER, MODEL_TYPE_RISK
 from ml_stock_selector.portfolio.allocator import allocate_weights
 from ml_stock_selector.portfolio.constraints import (
     PortfolioConstraints,
     apply_hard_filters,
     is_unknown_industry,
 )
-from ml_stock_selector.portfolio.constructor import construct_portfolio_targets
-from ml_stock_selector.prediction import build_prediction_rows, predict_with_model
-from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates
+from ml_stock_selector.portfolio.constructor import construct_portfolio_targets, construct_portfolio_targets_v2
+from ml_stock_selector.prediction import build_prediction_rows, build_three_model_prediction_rows, predict_with_model
+from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates, score_candidates_v2
 from ml_stock_selector.serving.artifact_loader import load_active_model
 from ml_stock_selector.storage import upsert_dataframe
 
@@ -21,9 +21,11 @@ def generate_daily_signal(
     horizon_d: int,
     portfolio_id: str,
     constraints: PortfolioConstraints | None = None,
+    use_v2: bool = False,
 ):
     constraints = constraints or PortfolioConstraints(min_trade_score=-999.0)
-    artifact = load_active_model(con, MODEL_TYPE_RANKER, feature_set_id, "rank_label", "from_next_open", horizon_d)
+    rank_label = "absolute_label" if use_v2 else "rank_label"
+    artifact = load_active_model(con, MODEL_TYPE_RANKER, feature_set_id, rank_label, "from_next_open", horizon_d)
     feature_mart = con.execute(
         """
         select *
@@ -33,8 +35,21 @@ def generate_daily_signal(
         """,
         [as_of_date, feature_set_id],
     ).fetchdf()
-    scores = predict_with_model(feature_mart, artifact)
-    predictions = build_prediction_rows(feature_mart, scores, artifact)
+    if use_v2:
+        active = load_active_model(con, MODEL_TYPE_ACTIVE_RANKER, feature_set_id, "active_label", "from_next_open", horizon_d)
+        risk = load_active_model(con, MODEL_TYPE_RISK, feature_set_id, "risk_label", "from_next_open", horizon_d)
+        predictions = build_three_model_prediction_rows(
+            feature_mart,
+            predict_with_model(feature_mart, artifact),
+            predict_with_model(feature_mart, active),
+            predict_with_model(feature_mart, risk),
+            artifact,
+            active,
+            risk,
+        )
+    else:
+        scores = predict_with_model(feature_mart, artifact)
+        predictions = build_prediction_rows(feature_mart, scores, artifact)
     enrich_cols = [
         "trade_date",
         "code",
@@ -46,9 +61,14 @@ def generate_daily_signal(
         "can_buy_next_open",
     ]
     predictions = predictions.merge(feature_mart[enrich_cols], on=["trade_date", "code"], how="left")
-    predictions = score_candidates(add_liquidity_score(add_context_score(predictions)))
-    hard_filtered = apply_hard_filters(predictions, constraints)
-    targets = construct_portfolio_targets(predictions, constraints, portfolio_id)
+    if use_v2:
+        predictions = score_candidates_v2(add_liquidity_score(add_context_score(predictions)))
+        hard_filtered = apply_hard_filters(predictions, constraints, score_column=None)
+        targets = construct_portfolio_targets_v2(predictions, constraints, portfolio_id)
+    else:
+        predictions = score_candidates(add_liquidity_score(add_context_score(predictions)))
+        hard_filtered = apply_hard_filters(predictions, constraints)
+        targets = construct_portfolio_targets(predictions, constraints, portfolio_id)
     targets = allocate_weights(targets, 0.05, 0.10, allow_cash=True)
     predictions = _annotate_selection_reasons(predictions, hard_filtered, targets, constraints)
     upsert_dataframe(con, "ml_predictions_daily", predictions, ["trade_date", "code", "model_id", "horizon_d"])

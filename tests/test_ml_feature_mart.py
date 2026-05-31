@@ -55,3 +55,26 @@ def test_feature_mart_assembles_features_json_by_feature_set(tmp_path):
     assert "raw_label_5" in vpa_features
     assert "final_state" not in vpa_features
 
+
+def test_feature_mart_v2_excludes_industry_from_features_json(tmp_path):
+    vpa_db = create_vpa_db(tmp_path / "vpa.duckdb")
+    bars = normalized_bars()
+    tradeability = build_tradeability_mart(bars)
+
+    mart = build_feature_mart(
+        str(vpa_db),
+        bars,
+        "2024-01-02",
+        "2024-01-08",
+        FEATURE_SET_BASELINE_A,
+        [5, 20],
+        tradeability,
+        exclude_industry_metadata_from_features_json=True,
+    )
+
+    features = json.loads(mart.iloc[0]["features_json"])
+    assert "industry_code" not in features
+    assert "industry_name" not in features
+    assert "industry_unknown" not in features
+    assert {"industry_code", "industry_name"}.issubset(mart.columns)
+    assert mart["industry_code"].notna().any()

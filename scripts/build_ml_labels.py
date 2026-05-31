@@ -25,6 +25,7 @@ def main() -> None:
         bars,
         [int(value) for value in config.labels["horizons"]],
         float(config.labels["risk_drawdown_threshold"]),
+        include_v2=bool(config.ml_v2["labels_v2_enabled"]),
     )
     con = init_ml_db(str(config.data["ml_db"]))
     try:

@@ -3,8 +3,7 @@ from __future__ import annotations
 from ml_stock_selector.constants import FEATURE_SET_BASELINE_A
 from ml_stock_selector.feature_mart import build_feature_mart
 from ml_stock_selector.label_builder import build_labels
-from ml_stock_selector.models.alpha_ranker import load_alpha_ranker
-from ml_stock_selector.models.risk_model import train_risk_model
+from ml_stock_selector.models.risk_model import load_risk_model, train_risk_model
 from ml_stock_selector.sample_builder import build_training_samples
 from ml_stock_selector.tradeability import build_tradeability_mart
 from tests.ml_fixtures import create_vpa_db, normalized_bars
@@ -16,7 +15,11 @@ def test_risk_model_trains_saves_and_predicts(tmp_path):
     samples = build_training_samples(feature_mart, build_labels(bars, [1]), FEATURE_SET_BASELINE_A, 1, "from_next_open")
 
     artifact = train_risk_model(samples, FEATURE_SET_BASELINE_A, "risk_label", "from_next_open", 1, tmp_path)
-    model = load_alpha_ranker(artifact)
+    model = load_risk_model(artifact)
+    probs = model.predict_proba(samples)
 
-    assert len(model.predict(samples)) == len(samples)
+    assert len(probs) == len(samples)
+    assert probs.between(0.0, 1.0).all()
     assert artifact.model_type == "risk_model"
+    assert artifact.model_id.startswith("risk_model_")
+    assert "roc_auc" in artifact.metrics or "roc_auc_unavailable" in artifact.metrics

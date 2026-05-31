@@ -80,3 +80,47 @@ def construct_portfolio_targets(
         "generated_at",
     ]
     return out[[column for column in columns if column in out.columns]]
+
+
+def build_candidate_pool_v2(scored_candidates: pd.DataFrame, constraints: PortfolioConstraints) -> pd.DataFrame:
+    hard = apply_hard_filters(scored_candidates, constraints, score_column=None)
+    if hard.empty:
+        return hard.copy()
+    mask = (
+        (
+            hard["absolute_rank_pct"].fillna(0.0) >= constraints.candidate_absolute_min_rank_pct
+        )
+        | (
+            hard["active_rank_pct"].fillna(0.0) >= constraints.candidate_active_min_rank_pct
+        )
+    ) & (hard["risk_rank_pct"].fillna(1.0) <= constraints.candidate_risk_max_rank_pct)
+    return hard[mask].copy()
+
+
+def build_core_pool_v2(candidate_pool: pd.DataFrame, constraints: PortfolioConstraints) -> pd.DataFrame:
+    if candidate_pool.empty:
+        return candidate_pool.copy()
+    mask = (
+        (candidate_pool["absolute_rank_pct"].fillna(0.0) >= constraints.core_absolute_min_rank_pct)
+        & (candidate_pool["active_rank_pct"].fillna(0.0) >= constraints.core_active_min_rank_pct)
+        & (candidate_pool["risk_rank_pct"].fillna(1.0) <= constraints.core_risk_max_rank_pct)
+        & (candidate_pool["trade_score_v2"].fillna(-1.0) >= constraints.core_min_trade_score)
+    )
+    return candidate_pool[mask].copy()
+
+
+def construct_portfolio_targets_v2(
+    scored_candidates: pd.DataFrame,
+    constraints: PortfolioConstraints,
+    portfolio_id: str,
+    current_holdings: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    candidate_pool = build_candidate_pool_v2(scored_candidates, constraints)
+    if len(candidate_pool) < constraints.candidate_min_count:
+        return construct_portfolio_targets(candidate_pool.iloc[0:0].assign(trade_score=[]), constraints, portfolio_id, current_holdings)
+    core_pool = build_core_pool_v2(candidate_pool, constraints)
+    if core_pool.empty or float(core_pool["trade_score_v2"].median()) < constraints.core_min_trade_score:
+        return construct_portfolio_targets(core_pool.iloc[0:0].assign(trade_score=[]), constraints, portfolio_id, current_holdings)
+    legacy_shaped = core_pool.copy()
+    legacy_shaped["trade_score"] = legacy_shaped["trade_score_v2"]
+    return construct_portfolio_targets(legacy_shaped, constraints, portfolio_id, current_holdings)

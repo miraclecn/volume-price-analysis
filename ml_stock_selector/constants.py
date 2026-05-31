@@ -10,6 +10,11 @@ FEATURE_SET_VPA_E = "vpa_e_structure_state"
 MODEL_TYPE_RANKER = "alpha_ranker"
 MODEL_TYPE_REGRESSOR = "alpha_regressor"
 MODEL_TYPE_RISK = "risk_model"
+MODEL_TYPE_ACTIVE_RANKER = "active_ranker"
+
+SCORE_VERSION_LEGACY = "v1_legacy"
+SCORE_VERSION_THREE_MODEL = "v2_three_model"
+FEATURE_SCHEMA_V2_NO_INDUSTRY = "v2_no_industry"
 
 EXECUTION_NEXT_OPEN = "next_open"
 EXECUTION_NEXT_VWAP = "next_vwap"

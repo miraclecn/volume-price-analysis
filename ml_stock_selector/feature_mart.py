@@ -99,6 +99,7 @@ def build_feature_mart(
     feature_set_id: str,
     windows: list[int],
     tradeability: pd.DataFrame,
+    exclude_industry_metadata_from_features_json: bool = False,
 ) -> pd.DataFrame:
     bars = normalized_bars[(normalized_bars["trade_date"] >= start_date) & (normalized_bars["trade_date"] <= end_date)]
     ohlcv = build_ohlcv_features(bars, windows)
@@ -133,14 +134,16 @@ def build_feature_mart(
         "can_sell_next_open",
     ]
     out = wide[["trade_date", "code"]].merge(tradeability[trade_cols], on=["trade_date", "code"], how="left")
-    json_source = wide.merge(
-        out[["trade_date", "code", "industry_code", "industry_name"]],
-        on=["trade_date", "code"],
-        how="left",
-    )
-    json_source["industry_unknown"] = (
-        json_source["industry_code"].fillna("").astype(str).str.upper() == UNKNOWN_INDUSTRY_CODE
-    )
+    json_source = wide.copy()
+    if not exclude_industry_metadata_from_features_json:
+        json_source = json_source.merge(
+            out[["trade_date", "code", "industry_code", "industry_name"]],
+            on=["trade_date", "code"],
+            how="left",
+        )
+        json_source["industry_unknown"] = (
+            json_source["industry_code"].fillna("").astype(str).str.upper() == UNKNOWN_INDUSTRY_CODE
+        )
     json_cols = [col for col in json_source.columns if col not in {"trade_date", "code"}]
     out["feature_set_id"] = feature_set_id
     out["vpa_data_version"] = "v1"
