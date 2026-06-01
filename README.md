@@ -11,7 +11,7 @@ only `ml_*` tables and model artifacts under `outputs/ml/`.
 The intended command sequence is:
 
 ```bash
-python scripts/run_alpha_data_contract_check.py --db outputs/research_source.duckdb
+python scripts/run_alpha_data_contract_check.py --db /home/nan/alpha-data-local/output/research_source.duckdb
 python scripts/run_ml_schema_check.py --vpa-db outputs/vpa.duckdb
 python scripts/run_ml_feature_mart.py --config config/ml_default.toml
 python scripts/build_ml_labels.py --config config/ml_default.toml

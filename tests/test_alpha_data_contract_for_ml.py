@@ -103,3 +103,14 @@ def test_optional_benchmark_loaders_read_available_tables(tmp_path):
 
     assert market["market_ret"].tolist() == [0.01]
     assert industry["industry_ret"].tolist() == [0.02]
+
+
+def test_load_normalized_stock_bars_supports_compact_source_dates(tmp_path):
+    frame = normalized_bars()
+    frame["trade_date"] = frame["trade_date"].str.replace("-", "", regex=False)
+    db_path = create_alpha_data_db(tmp_path / "alpha.duckdb", frame)
+
+    loaded = load_normalized_stock_bars(str(db_path), "2024-01-03", "2024-01-04")
+
+    assert set(loaded["trade_date"]) == {"2024-01-03", "2024-01-04"}
+    assert len(loaded) == 8

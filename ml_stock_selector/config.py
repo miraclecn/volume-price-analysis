@@ -11,6 +11,7 @@ class MLConfig:
     features: dict[str, object]
     labels: dict[str, object]
     split: dict[str, object]
+    universe: dict[str, object]
     model: dict[str, object]
     portfolio: dict[str, object]
     backtest: dict[str, object]
@@ -46,6 +47,7 @@ def load_ml_config(path: Path | str) -> MLConfig:
         features=raw["features"],
         labels=raw["labels"],
         split=raw["split"],
+        universe=raw.get("universe", {"exclude_bse": False}),
         model=raw["model"],
         portfolio=raw["portfolio"],
         backtest=raw["backtest"],

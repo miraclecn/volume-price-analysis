@@ -6,6 +6,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ml_stock_selector.config import load_ml_config
+from ml_stock_selector.benchmarks import build_benchmark_tables
 from ml_stock_selector.data_access import load_normalized_stock_bars
 from ml_stock_selector.label_builder import build_labels
 from ml_stock_selector.storage import init_ml_db, upsert_dataframe
@@ -30,6 +31,9 @@ def main() -> None:
     con = init_ml_db(str(config.data["ml_db"]))
     try:
         upsert_dataframe(con, "ml_labels_daily", labels, ["trade_date", "code", "horizon_d", "label_base"])
+        market_bm, industry_bm = build_benchmark_tables(labels)
+        upsert_dataframe(con, "ml_market_benchmark_daily", market_bm, ["trade_date", "horizon_d", "label_base"])
+        upsert_dataframe(con, "ml_industry_benchmark_daily", industry_bm, ["trade_date", "industry_code", "horizon_d", "label_base"])
     finally:
         con.close()
     print(f"rows={len(labels)}")

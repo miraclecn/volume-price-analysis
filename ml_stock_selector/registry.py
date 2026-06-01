@@ -18,16 +18,29 @@ def register_model(
     params_json: str = "{}",
     metrics_json: str = "{}",
     notes: str | None = None,
+    train_start: str | None = None,
+    train_end: str | None = None,
+    valid_start: str | None = None,
+    valid_end: str | None = None,
+    test_start: str | None = None,
+    test_end: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
     con.execute(
         """
         insert into ml_model_registry (
             model_id, model_type, feature_set_id, label_name, label_base, horizon_d,
+            train_start, train_end, valid_start, valid_end, test_start, test_end,
             params_json, metrics_json, feature_schema_uri, artifact_uri,
             is_active, activated_at, deactivated_at, created_at, notes
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, null, null, ?, ?)
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, null, null, ?, ?)
         on conflict (model_id) do update set
+            train_start = excluded.train_start,
+            train_end = excluded.train_end,
+            valid_start = excluded.valid_start,
+            valid_end = excluded.valid_end,
+            test_start = excluded.test_start,
+            test_end = excluded.test_end,
             params_json = excluded.params_json,
             metrics_json = excluded.metrics_json,
             feature_schema_uri = excluded.feature_schema_uri,
@@ -38,12 +51,18 @@ def register_model(
             model_id,
             model_type,
             feature_set_id,
-            label_name,
-            label_base,
-            horizon_d,
-            params_json,
-            metrics_json,
-            feature_schema_uri,
+                label_name,
+                label_base,
+                horizon_d,
+                train_start,
+                train_end,
+                valid_start,
+                valid_end,
+                test_start,
+                test_end,
+                params_json,
+                metrics_json,
+                feature_schema_uri,
             artifact_uri,
             now,
             notes,
@@ -97,4 +116,3 @@ def get_active_model(
     if row.empty:
         raise ValueError("No active model found")
     return row.iloc[0].to_dict()
-

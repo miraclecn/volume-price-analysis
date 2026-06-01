@@ -46,8 +46,8 @@ C = 50
 D = 35
 
 [sources]
-research_source = "/home/nan/alpha-find-v2/output/research_source.duckdb"
-audited_stock = "/home/nan/alpha-find/output/stock_data_audited.duckdb"
+research_source = "/home/nan/alpha-data-local/output/research_source.duckdb"
+audited_stock = "/home/nan/alpha-data-local/output/research_source.duckdb"
 
 [outputs]
 database = "outputs/vpa.duckdb"

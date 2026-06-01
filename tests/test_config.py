@@ -26,5 +26,5 @@ def test_default_scoring_weights_sum_to_one():
 def test_default_config_points_at_read_only_external_sources():
     config = load_config(Path("config/default.toml"))
 
-    assert config.sources["research_source"].endswith("research_source.duckdb")
-    assert config.sources["audited_stock"].endswith("stock_data_audited.duckdb")
+    assert config.sources["research_source"] == "/home/nan/alpha-data-local/output/research_source.duckdb"
+    assert config.sources["audited_stock"] == "/home/nan/alpha-data-local/output/research_source.duckdb"

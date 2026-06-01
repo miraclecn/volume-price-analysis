@@ -132,6 +132,7 @@ def build_feature_mart(
         "adv20_amount",
         "can_buy_next_open",
         "can_sell_next_open",
+        "is_bse",
     ]
     out = wide[["trade_date", "code"]].merge(tradeability[trade_cols], on=["trade_date", "code"], how="left")
     json_source = wide.copy()
@@ -164,6 +165,7 @@ def build_feature_mart(
         "adv20_amount",
         "can_buy_next_open",
         "can_sell_next_open",
+        "is_bse",
         "features_json",
     ]
     return out[columns].sort_values(["trade_date", "code"]).reset_index(drop=True)

@@ -15,6 +15,7 @@ create table if not exists ml_tradeability_daily (
     amount double,
     turnover_rate double,
     adv20_amount double,
+    is_bse boolean,
     next_trade_date varchar,
     next_open double,
     next_limit_up double,
@@ -41,6 +42,7 @@ create table if not exists ml_feature_mart_daily (
     adv20_amount double,
     can_buy_next_open boolean,
     can_sell_next_open boolean,
+    is_bse boolean,
     features_json varchar,
     primary key (trade_date, code, feature_set_id)
 );
@@ -149,6 +151,11 @@ create table if not exists ml_predictions_daily (
     trade_score double,
     trade_score_v2 double,
     score_version varchar,
+    run_id varchar,
+    fold_id varchar,
+    absolute_model_id varchar,
+    active_model_id varchar,
+    risk_model_id varchar,
     feature_set_id varchar not null,
     generated_at varchar not null,
     primary key (trade_date, code, model_id, horizon_d)
@@ -203,8 +210,10 @@ create table if not exists ml_backtest_nav (
 
 create table if not exists ml_backtest_metrics (
     run_id varchar not null,
+    fold_id varchar,
+    score_version varchar,
     metric_name varchar not null,
     metric_value double,
     segment varchar not null,
-    primary key (run_id, metric_name, segment)
+    primary key (run_id, fold_id, score_version, metric_name, segment)
 );

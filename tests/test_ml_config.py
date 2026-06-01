@@ -26,6 +26,16 @@ def test_default_ml_config_exposes_v2_flags_enabled():
     assert config.ml_v2["risk_model_v2_enabled"] is True
     assert config.ml_v2["trade_score_v2_enabled"] is True
     assert config.ml_v2["daily_signal_v2_enabled"] is True
+    assert config.universe["exclude_bse"] is True
+
+
+def test_walkforward_config_uses_2015_start_and_named_folds():
+    config = load_ml_config("config/ml_walkforward.toml")
+    folds = config.split["folds"]
+    assert folds
+    assert all(fold["train_start"] == "2015-01-05" for fold in folds)
+    ids = [fold["fold_id"] for fold in folds]
+    assert len(ids) == len(set(ids))
 
 
 def test_ml_v2_config_overrides_are_loaded(tmp_path):

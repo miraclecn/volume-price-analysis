@@ -15,7 +15,7 @@ The root contains the domain spec, package code, SQL schema, tests, and run scri
 
 - `python -m pytest tests -v` runs the full test suite.
 - `python -m pytest tests/test_features.py -v` runs focused feature tests.
-- `python scripts/run_vpa_structure.py --config config/default.toml --start-date 2024-01-01 --end-date 2024-01-31 --source /home/nan/alpha-find-v2/output/research_source.duckdb --output-db outputs/vpa_smoke.duckdb --output-dir outputs/reports` runs a local pipeline batch.
+- `python scripts/run_vpa_structure.py --config config/default.toml --start-date 2024-01-01 --end-date 2024-01-31 --source /home/nan/alpha-data-local/output/research_source.duckdb --output-db outputs/vpa_smoke.duckdb --output-dir outputs/reports` runs a local pipeline batch.
 - `VPA_RUN_EXTERNAL_DUCKDB_TESTS=1 python -m pytest tests/test_external_duckdb_contract.py -v` checks the temporary external DuckDB contract.
 
 ## Coding Style & Naming Conventions

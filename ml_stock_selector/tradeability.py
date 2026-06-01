@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from ml_stock_selector.universe import detect_is_bse
+
 
 def build_tradeability_mart(normalized_bars: pd.DataFrame, adv_window: int = 20) -> pd.DataFrame:
     rows = []
@@ -16,6 +18,7 @@ def build_tradeability_mart(normalized_bars: pd.DataFrame, adv_window: int = 20)
         g = g.rename(columns={"next_trade_date": "next_trade_date"})
         g["can_buy_next_open"] = (~g["next_is_paused"].fillna(True).astype(bool)) & (g["next_open"] < g["next_limit_up"])
         g["can_sell_next_open"] = (~g["next_is_paused"].fillna(True).astype(bool)) & (g["next_open"] > g["next_limit_down"])
+        g["is_bse"] = g["code"].map(detect_is_bse)
         g["generated_at"] = generated_at
         rows.append(g)
     columns = [
@@ -35,6 +38,7 @@ def build_tradeability_mart(normalized_bars: pd.DataFrame, adv_window: int = 20)
         "amount",
         "turnover_rate",
         "adv20_amount",
+        "is_bse",
         "next_trade_date",
         "next_open",
         "next_limit_up",
@@ -46,4 +50,3 @@ def build_tradeability_mart(normalized_bars: pd.DataFrame, adv_window: int = 20)
     ]
     out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame(columns=columns)
     return out[columns].astype(object).where(pd.notna(out[columns]), None)
-

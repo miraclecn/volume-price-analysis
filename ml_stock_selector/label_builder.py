@@ -92,36 +92,18 @@ def _add_v2_labels(labels: pd.DataFrame, min_industry_peer_count: int) -> pd.Dat
     out["market_ret"] = out.groupby(group_keys)["absolute_ret"].transform("mean")
     out["benchmark_missing_market"] = out["market_ret"].isna()
     out["market_excess_ret"] = out["absolute_ret"] - out["market_ret"]
-
-    industry_ret = []
-    peer_counts = []
-    missing_industry = []
-    for row in out.itertuples(index=False):
-        industry = getattr(row, "industry_code", None)
-        if _is_unknown_industry(industry):
-            industry_ret.append(None)
-            peer_counts.append(0)
-            missing_industry.append(True)
-            continue
-        peers = out[
-            (out["trade_date"] == row.trade_date)
-            & (out["horizon_d"] == row.horizon_d)
-            & (out["label_base"] == row.label_base)
-            & (out["industry_code"] == industry)
-            & (out["code"] != row.code)
-        ]
-        peer_count = int(len(peers))
-        peer_counts.append(peer_count)
-        if peer_count < min_industry_peer_count:
-            industry_ret.append(None)
-            missing_industry.append(True)
-        else:
-            industry_ret.append(float(peers["absolute_ret"].mean()))
-            missing_industry.append(False)
-
-    out["industry_ret"] = industry_ret
-    out["benchmark_peer_count"] = peer_counts
-    out["benchmark_missing_industry"] = pd.Series(missing_industry, index=out.index, dtype=object)
+    unknown_industry = out["industry_code"].map(_is_unknown_industry)
+    industry_keys = group_keys + ["industry_code"]
+    industry_sum = out.groupby(industry_keys)["absolute_ret"].transform("sum")
+    industry_count = out.groupby(industry_keys)["absolute_ret"].transform("count")
+    peer_count = (industry_count - 1).clip(lower=0).astype("int64")
+    peer_count = peer_count.where(~unknown_industry, 0).astype("int64")
+    out["benchmark_peer_count"] = peer_count
+    enough_peers = out["benchmark_peer_count"] >= int(min_industry_peer_count)
+    denominator = (industry_count - 1).where((industry_count - 1) > 0)
+    industry_ret = (industry_sum - out["absolute_ret"]) / denominator
+    out["industry_ret"] = industry_ret.where(enough_peers & ~unknown_industry)
+    out["benchmark_missing_industry"] = (unknown_industry | ~enough_peers).astype(object)
     out["industry_excess_ret"] = out["absolute_ret"] - out["industry_ret"]
     out["active_score"] = out["market_excess_ret"]
     has_industry = ~out["benchmark_missing_industry"].astype(bool)

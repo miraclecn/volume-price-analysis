@@ -12,6 +12,7 @@ from ml_stock_selector.models.risk_model import train_risk_model
 from ml_stock_selector.registry import activate_model, register_model
 from ml_stock_selector.sample_builder import build_training_samples
 from ml_stock_selector.storage import init_ml_db
+from ml_stock_selector.universe import apply_universe_filter
 
 
 def main() -> None:
@@ -26,6 +27,7 @@ def main() -> None:
     con = init_ml_db(str(config.data["ml_db"]))
     try:
         feature_mart = con.execute("select * from ml_feature_mart_daily where feature_set_id = ?", [feature_set_id]).fetchdf()
+        feature_mart = apply_universe_filter(feature_mart, exclude_bse=bool(config.universe.get("exclude_bse", False)))
         labels = con.execute("select * from ml_labels_daily").fetchdf()
         artifacts = train_model_artifacts(
             feature_mart,
@@ -35,6 +37,7 @@ def main() -> None:
             label_base,
             Path(str(config.data["artifact_dir"])),
             config.ml_v2,
+            bool(config.universe.get("exclude_bse", False)),
         )
         for artifact in artifacts:
             register_model(
@@ -62,6 +65,7 @@ def train_model_artifacts(
     label_base: str,
     artifact_dir: Path,
     ml_v2: dict[str, object],
+    exclude_bse: bool = False,
 ):
     artifacts = []
     deny_industry = bool(ml_v2.get("feature_matrix_v2_deny_industry"))
@@ -73,6 +77,7 @@ def train_model_artifacts(
         horizon,
         label_base,
         label_name=absolute_label,
+        exclude_bse=exclude_bse,
     )
     artifacts.append(train_alpha_ranker(absolute_samples, feature_set_id, absolute_label, label_base, horizon, artifact_dir, deny_industry=deny_industry))
     if bool(ml_v2.get("active_ranker_enabled")):
@@ -83,6 +88,7 @@ def train_model_artifacts(
             horizon,
             label_base,
             label_name="active_label",
+            exclude_bse=exclude_bse,
         )
         artifacts.append(train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, deny_industry=deny_industry))
     if bool(ml_v2.get("risk_model_v2_enabled")):
@@ -93,6 +99,7 @@ def train_model_artifacts(
             horizon,
             label_base,
             label_name="risk_label",
+            exclude_bse=exclude_bse,
         )
         artifacts.append(train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, deny_industry=deny_industry))
     return artifacts

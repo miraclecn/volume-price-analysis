@@ -2,19 +2,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
+import json
 
 import pandas as pd
 
 from ml_stock_selector.backtest.engine import BacktestConfig, BacktestResult, run_backtest
 from ml_stock_selector.backtest.execution import ExecutionConfig
 from ml_stock_selector.constants import FEATURE_SET_BASELINE_A
+from ml_stock_selector.constants import MODEL_TYPE_ACTIVE_RANKER, MODEL_TYPE_RANKER, MODEL_TYPE_RISK
+from ml_stock_selector.models.active_ranker import train_active_ranker
 from ml_stock_selector.models.alpha_ranker import train_alpha_ranker
+from ml_stock_selector.models.risk_model import train_risk_model
 from ml_stock_selector.portfolio.allocator import allocate_weights
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints
-from ml_stock_selector.portfolio.constructor import construct_portfolio_targets
-from ml_stock_selector.prediction import build_prediction_rows, predict_with_model
+from ml_stock_selector.portfolio.constructor import construct_portfolio_targets_v2
+from ml_stock_selector.prediction import build_three_model_prediction_rows, predict_with_model
+from ml_stock_selector.registry import register_model
 from ml_stock_selector.sample_builder import build_training_samples
-from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates
+from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates_v2
+from ml_stock_selector.universe import apply_universe_filter
 
 
 @dataclass(frozen=True)
@@ -27,30 +34,161 @@ class WalkForwardFoldResult:
     metrics: dict[str, float]
 
 
+def _between(frame: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+    return frame[(frame["trade_date"] >= start) & (frame["trade_date"] <= end)].copy()
+
+
+def _portfolio_constraints_from_config(config) -> PortfolioConstraints:
+    portfolio = config.portfolio
+    ml_v2 = config.ml_v2
+    return PortfolioConstraints(
+        min_trade_score=float(portfolio["min_trade_score"]),
+        min_adv20_amount=float(portfolio.get("min_adv20_amount", 0.0)) or None,
+        target_positions=int(portfolio["target_positions"]),
+        hard_max_positions=int(portfolio["hard_max_positions"]),
+        max_industry_names=int(portfolio["max_industry_names"]),
+        max_unknown_industry_names=int(portfolio.get("max_unknown_industry_names", 1)),
+        max_new_entries_per_day=int(portfolio["max_new_entries_per_day"]),
+        allow_cash=bool(portfolio["allow_cash"]),
+        candidate_min_count=int(ml_v2.get("candidate_min_count", 5)),
+        candidate_absolute_min_rank_pct=float(ml_v2["candidate_absolute_min_rank_pct"]),
+        candidate_active_min_rank_pct=float(ml_v2["candidate_active_min_rank_pct"]),
+        candidate_risk_max_rank_pct=float(ml_v2["candidate_risk_max_rank_pct"]),
+        core_absolute_min_rank_pct=float(ml_v2["core_absolute_min_rank_pct"]),
+        core_active_min_rank_pct=float(ml_v2["core_active_min_rank_pct"]),
+        core_risk_max_rank_pct=float(ml_v2["core_risk_max_rank_pct"]),
+        core_min_trade_score=float(ml_v2["core_min_trade_score"]),
+    )
+
+
 def run_walkforward_experiment(
     config,
+    con,
     normalized_bars: pd.DataFrame,
     feature_mart: pd.DataFrame,
     labels: pd.DataFrame,
     tradeability: pd.DataFrame,
     artifact_dir: Path | str = "outputs/ml/artifacts",
 ) -> list[WalkForwardFoldResult]:
+    run_id = f"wf_three_model_v2_{uuid4().hex[:8]}"
+    folds = config.split.get("folds", [])
+    if not folds:
+        return []
     feature_set_id = str(config.features.get("feature_set_id", FEATURE_SET_BASELINE_A))
     if feature_set_id not in set(feature_mart["feature_set_id"]):
         feature_set_id = str(feature_mart["feature_set_id"].iloc[0])
     horizon = int(config.labels.get("main_horizon", 1))
     if horizon not in set(labels["horizon_d"]):
         horizon = int(labels["horizon_d"].iloc[0])
-    samples = build_training_samples(feature_mart, labels, feature_set_id, horizon, str(config.labels.get("label_base", "from_next_open")))
-    if samples.empty:
-        samples = build_training_samples(feature_mart, labels, feature_set_id, horizon, "from_close")
-    artifact = train_alpha_ranker(samples, feature_set_id, "rank_label", str(samples["label_base"].iloc[0]), horizon, artifact_dir)
-    scores = predict_with_model(feature_mart, artifact)
-    predictions = build_prediction_rows(feature_mart, scores, artifact)
-    predictions = predictions.merge(feature_mart[["trade_date", "code", "industry_code", "is_st", "is_paused", "adv20_amount", "can_buy_next_open"]], on=["trade_date", "code"], how="left")
-    predictions = score_candidates(add_liquidity_score(add_context_score(predictions)))
-    targets = construct_portfolio_targets(predictions, PortfolioConstraints(min_trade_score=-999.0), "walkforward")
-    targets = allocate_weights(targets, 0.05, 0.10, True)
-    backtest = run_backtest(targets, normalized_bars, BacktestConfig(1000000.0, "walkforward", ExecutionConfig(slippage_bps=0, commission_bps=0, stamp_duty_bps=0)))
-    return [WalkForwardFoldResult("fold_1", [artifact.model_id], predictions, targets, backtest, {"rows": float(len(predictions))})]
+    label_base = str(config.labels.get("label_base", "from_next_open"))
+    exclude_bse = bool(config.universe.get("exclude_bse", False))
+    results: list[WalkForwardFoldResult] = []
+    for idx, fold in enumerate(folds):
+        fold_id = str(fold.get("fold_id", f"fold_{idx+1}"))
+        train_start = str(fold["train_start"])
+        train_end = str(fold["train_end"])
+        test_start = str(fold["test_start"])
+        test_end = str(fold["test_end"])
 
+        train_fm = _between(feature_mart, train_start, train_end)
+        test_fm = _between(feature_mart, test_start, test_end)
+        if train_fm.empty or test_fm.empty:
+            continue
+
+        abs_samples = build_training_samples(train_fm, labels, feature_set_id, horizon, label_base, "absolute_label", exclude_bse=exclude_bse)
+        active_samples = build_training_samples(train_fm, labels, feature_set_id, horizon, label_base, "active_label", exclude_bse=exclude_bse)
+        risk_samples = build_training_samples(train_fm, labels, feature_set_id, horizon, label_base, "risk_label", exclude_bse=exclude_bse)
+        if abs_samples.empty or active_samples.empty or risk_samples.empty:
+            continue
+
+        abs_artifact = train_alpha_ranker(abs_samples, feature_set_id, "absolute_label", label_base, horizon, artifact_dir, True)
+        active_artifact = train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, True)
+        risk_artifact = train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, True)
+        register_model(
+            con,
+            model_id=abs_artifact.model_id,
+            model_type=MODEL_TYPE_RANKER,
+            feature_set_id=feature_set_id,
+            label_name="absolute_label",
+            label_base=label_base,
+            horizon_d=horizon,
+            artifact_uri=str(abs_artifact.artifact_uri),
+            feature_schema_uri=str(abs_artifact.feature_schema_uri),
+            metrics_json=json.dumps(abs_artifact.metrics),
+            notes=f"walkforward:{run_id}:{fold_id}",
+            train_start=train_start,
+            train_end=train_end,
+            valid_start=str(fold.get("valid_start")),
+            valid_end=str(fold.get("valid_end")),
+            test_start=test_start,
+            test_end=test_end,
+        )
+        register_model(
+            con,
+            model_id=active_artifact.model_id,
+            model_type=MODEL_TYPE_ACTIVE_RANKER,
+            feature_set_id=feature_set_id,
+            label_name="active_label",
+            label_base=label_base,
+            horizon_d=horizon,
+            artifact_uri=str(active_artifact.artifact_uri),
+            feature_schema_uri=str(active_artifact.feature_schema_uri),
+            metrics_json=json.dumps(active_artifact.metrics),
+            notes=f"walkforward:{run_id}:{fold_id}",
+            train_start=train_start,
+            train_end=train_end,
+            valid_start=str(fold.get("valid_start")),
+            valid_end=str(fold.get("valid_end")),
+            test_start=test_start,
+            test_end=test_end,
+        )
+        register_model(
+            con,
+            model_id=risk_artifact.model_id,
+            model_type=MODEL_TYPE_RISK,
+            feature_set_id=feature_set_id,
+            label_name="risk_label",
+            label_base=label_base,
+            horizon_d=horizon,
+            artifact_uri=str(risk_artifact.artifact_uri),
+            feature_schema_uri=str(risk_artifact.feature_schema_uri),
+            metrics_json=json.dumps(risk_artifact.metrics),
+            notes=f"walkforward:{run_id}:{fold_id}",
+            train_start=train_start,
+            train_end=train_end,
+            valid_start=str(fold.get("valid_start")),
+            valid_end=str(fold.get("valid_end")),
+            test_start=test_start,
+            test_end=test_end,
+        )
+
+        test_fm = apply_universe_filter(test_fm, exclude_bse=exclude_bse)
+        predictions = build_three_model_prediction_rows(
+            test_fm,
+            predict_with_model(test_fm, abs_artifact),
+            predict_with_model(test_fm, active_artifact),
+            predict_with_model(test_fm, risk_artifact),
+            abs_artifact,
+            active_artifact,
+            risk_artifact,
+        )
+        enrich_cols = ["trade_date", "code", "industry_code", "industry_name", "is_st", "is_paused", "adv20_amount", "can_buy_next_open", "is_bse"]
+        predictions = predictions.merge(test_fm[enrich_cols], on=["trade_date", "code"], how="left")
+        predictions = score_candidates_v2(add_liquidity_score(add_context_score(predictions)))
+        predictions["run_id"] = run_id
+        predictions["fold_id"] = fold_id
+        predictions["absolute_model_id"] = abs_artifact.model_id
+        predictions["active_model_id"] = active_artifact.model_id
+        predictions["risk_model_id"] = risk_artifact.model_id
+        constraints = _portfolio_constraints_from_config(config)
+        targets = construct_portfolio_targets_v2(predictions, constraints, fold_id)
+        targets = allocate_weights(
+            targets,
+            float(config.portfolio["single_name_min_weight"]),
+            float(config.portfolio["single_name_max_weight"]),
+            bool(config.portfolio["allow_cash"]),
+        )
+        bars = _between(normalized_bars, test_start, test_end)
+        backtest = run_backtest(targets, bars, BacktestConfig(1000000.0, fold_id, ExecutionConfig(slippage_bps=0, commission_bps=0, stamp_duty_bps=0)))
+        results.append(WalkForwardFoldResult(fold_id, [abs_artifact.model_id, active_artifact.model_id, risk_artifact.model_id], predictions, targets, backtest, {"rows": float(len(predictions)), "run_id": run_id}))
+    return results

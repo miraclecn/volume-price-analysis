@@ -12,6 +12,7 @@ from ml_stock_selector.prediction import build_prediction_rows, build_three_mode
 from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates, score_candidates_v2
 from ml_stock_selector.serving.artifact_loader import load_active_model
 from ml_stock_selector.storage import upsert_dataframe
+from ml_stock_selector.universe import apply_universe_filter
 
 
 def generate_daily_signal(
@@ -22,6 +23,7 @@ def generate_daily_signal(
     portfolio_id: str,
     constraints: PortfolioConstraints | None = None,
     use_v2: bool = False,
+    exclude_bse: bool = False,
 ):
     constraints = constraints or PortfolioConstraints(min_trade_score=-999.0)
     rank_label = "absolute_label" if use_v2 else "rank_label"
@@ -35,6 +37,7 @@ def generate_daily_signal(
         """,
         [as_of_date, feature_set_id],
     ).fetchdf()
+    feature_mart = apply_universe_filter(feature_mart, exclude_bse=exclude_bse)
     if use_v2:
         active = load_active_model(con, MODEL_TYPE_ACTIVE_RANKER, feature_set_id, "active_label", "from_next_open", horizon_d)
         risk = load_active_model(con, MODEL_TYPE_RISK, feature_set_id, "risk_label", "from_next_open", horizon_d)
@@ -47,9 +50,15 @@ def generate_daily_signal(
             active,
             risk,
         )
+        predictions["absolute_model_id"] = artifact.model_id
+        predictions["active_model_id"] = active.model_id
+        predictions["risk_model_id"] = risk.model_id
     else:
         scores = predict_with_model(feature_mart, artifact)
         predictions = build_prediction_rows(feature_mart, scores, artifact)
+        predictions["absolute_model_id"] = artifact.model_id
+        predictions["active_model_id"] = None
+        predictions["risk_model_id"] = None
     enrich_cols = [
         "trade_date",
         "code",

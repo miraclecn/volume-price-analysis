@@ -26,6 +26,16 @@ NORMALIZED_BAR_COLUMNS = [
 ]
 
 
+def _compact_date(value: str) -> str:
+    return value.replace("-", "")
+
+
+def _normalize_trade_date(value: object) -> object:
+    if isinstance(value, str) and len(value) == 8 and value.isdigit():
+        return f"{value[:4]}-{value[4:6]}-{value[6:]}"
+    return value
+
+
 def load_normalized_stock_bars(
     alpha_data_db_path: str,
     start_date: str,
@@ -52,15 +62,14 @@ def load_normalized_stock_bars(
         query = f"""
             select {', '.join(select_cols)}
             from {table_name}
-            where trade_date between ? and ?
+            where replace(trade_date, '-', '') between ? and ?
             order by code, trade_date
         """
-        frame = con.execute(query, [start_date, end_date]).fetchdf()
+        frame = con.execute(query, [_compact_date(start_date), _compact_date(end_date)]).fetchdf()
     finally:
         con.close()
+    frame["trade_date"] = frame["trade_date"].map(_normalize_trade_date)
     return frame.astype(object).where(pd.notna(frame), None)
-
-
 def load_optional_market_benchmark_returns(
     alpha_data_db_path: str,
     start_date: str,
