@@ -141,6 +141,38 @@ def test_ml_upsert_is_idempotent(tmp_path):
     assert row == (1, 12.0)
 
 
+def test_backtest_metrics_schema_allows_multiple_folds_per_run(tmp_path):
+    con = init_ml_db(tmp_path / "ml.duckdb")
+    metrics = pd.DataFrame(
+        [
+            {
+                "run_id": "run",
+                "fold_id": "wf_2020",
+                "score_version": "v2",
+                "metric_name": "annualized_return",
+                "metric_value": 0.1,
+                "segment": "fold",
+            },
+            {
+                "run_id": "run",
+                "fold_id": "wf_2021",
+                "score_version": "v2",
+                "metric_name": "annualized_return",
+                "metric_value": 0.2,
+                "segment": "fold",
+            },
+        ]
+    )
+
+    upsert_dataframe(con, "ml_backtest_metrics", metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
+
+    row = con.execute(
+        "select count(*), sum(metric_value) from ml_backtest_metrics where run_id = 'run'"
+    ).fetchone()
+    con.close()
+    assert row == (2, 0.30000000000000004)
+
+
 def _columns(con, table_name: str) -> set[str]:
     return {
         row[0]

@@ -106,6 +106,10 @@ create table if not exists ml_model_registry (
     label_name varchar not null,
     label_base varchar not null,
     horizon_d integer not null,
+    run_id varchar,
+    fold_id varchar,
+    feature_store_version varchar,
+    feature_schema_hash varchar,
     train_start varchar,
     train_end varchar,
     valid_start varchar,
@@ -161,6 +165,24 @@ create table if not exists ml_predictions_daily (
     primary key (trade_date, code, model_id, horizon_d)
 );
 
+create table if not exists ml_prediction_raw_daily (
+    trade_date varchar not null,
+    code varchar not null,
+    run_id varchar not null,
+    fold_id varchar not null,
+    score_version varchar not null,
+    feature_set_id varchar not null,
+    horizon_d integer not null,
+    absolute_model_id varchar,
+    active_model_id varchar,
+    risk_model_id varchar,
+    absolute_score double,
+    active_score double,
+    risk_prob double,
+    generated_at varchar not null,
+    primary key (trade_date, code, run_id, fold_id, horizon_d)
+);
+
 create table if not exists ml_portfolio_targets_daily (
     trade_date varchar not null,
     portfolio_id varchar not null,
@@ -169,8 +191,58 @@ create table if not exists ml_portfolio_targets_daily (
     rank_n integer,
     trade_score double,
     entry_reason varchar,
+    signal_action varchar,
+    hold_reason varchar,
+    exit_reason varchar,
+    sell_blocked_reason varchar,
+    entry_date varchar,
+    entry_price double,
+    shares double,
+    holding_days integer,
+    entry_trade_score double,
+    latest_trade_score double,
     generated_at varchar,
     primary key (trade_date, portfolio_id, code)
+);
+
+create table if not exists ml_portfolio_construction_diagnostics (
+    trade_date varchar not null,
+    run_id varchar not null,
+    fold_id varchar not null,
+    portfolio_id varchar not null,
+    score_version varchar not null,
+    raw_candidate_count integer,
+    hard_filter_pass_count integer,
+    core_pool_size integer,
+    candidate_pool_size integer,
+    selected_from_core integer,
+    selected_from_candidate integer,
+    final_selected_count integer,
+    low_adv_rejected_count integer,
+    cannot_buy_rejected_count integer,
+    st_rejected_count integer,
+    paused_rejected_count integer,
+    bse_rejected_count integer,
+    low_trade_score_rejected_count integer,
+    high_risk_rejected_count integer,
+    industry_limit_blocked_count integer,
+    unknown_industry_limit_blocked_count integer,
+    max_new_entries_blocked_count integer,
+    retained_holdings_count integer,
+    sell_signal_count integer,
+    sell_executed_count integer,
+    sell_blocked_count integer,
+    hold_due_to_min_days_count integer,
+    hold_due_to_score_ok_count integer,
+    exit_due_to_score_count integer,
+    exit_due_to_risk_count integer,
+    exit_due_to_time_count integer,
+    exit_due_to_not_candidate_count integer,
+    avg_holding_days_current double,
+    median_holding_days_current double,
+    cash_weight double,
+    created_at varchar,
+    primary key (trade_date, run_id, fold_id, portfolio_id, score_version)
 );
 
 create table if not exists ml_backtest_orders (
@@ -185,6 +257,14 @@ create table if not exists ml_backtest_orders (
     fill_px double,
     status varchar not null,
     reason varchar,
+    entry_date varchar,
+    exit_date varchar,
+    holding_days integer,
+    entry_trade_score double,
+    exit_trade_score double,
+    entry_reason varchar,
+    exit_reason varchar,
+    sell_blocked_reason varchar,
     primary key (sim_date, decision_date, code, side)
 );
 
@@ -195,6 +275,11 @@ create table if not exists ml_backtest_positions (
     position_qty double,
     market_value double,
     weight double,
+    entry_date varchar,
+    entry_price double,
+    holding_days integer,
+    entry_trade_score double,
+    entry_reason varchar,
     primary key (sim_date, code)
 );
 
@@ -211,9 +296,30 @@ create table if not exists ml_backtest_nav (
 create table if not exists ml_backtest_metrics (
     run_id varchar not null,
     fold_id varchar,
+    strategy_id varchar,
     score_version varchar,
+    start_date varchar,
+    end_date varchar,
     metric_name varchar not null,
     metric_value double,
+    annual_return double,
+    total_return double,
+    max_drawdown double,
+    calmar_like double,
+    turnover double,
+    win_rate double,
+    empty_day_ratio double,
+    cash_ratio_avg double,
+    bse_excluded_count double,
+    unknown_industry_weight_avg double,
+    core_pool_size_avg double,
+    candidate_pool_size_avg double,
+    avg_holding_days double,
+    median_holding_days double,
+    max_holding_days double,
+    holding_segment_count double,
+    turnover_daily_avg double,
+    sell_blocked_count double,
     segment varchar not null,
     primary key (run_id, fold_id, score_version, metric_name, segment)
 );
