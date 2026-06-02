@@ -41,6 +41,16 @@ metadata for reports and portfolio constraints, but are excluded from
 features. Market and industry benchmark labels are computed locally from
 `stock_bar_normalized_daily` unless upstream benchmark views are available later.
 
+Portfolio v2 is holding-aware. A five-day horizon gives a signal time to
+realize but does not force exactly five holding days. Defaults are
+`min_hold_days = 3`, `target_hold_days = 5`, and `max_hold_days = 10`.
+`core_pool` and `candidate_pool` choose buy candidates; sells are decided by
+hard, risk, score, time, and not-candidate-after-target rules. The sell score
+threshold is lower than the buy threshold to create hysteresis and reduce
+turnover. `max_new_entries_per_day` limits only new names, never retained
+holdings. If `can_sell_next_open = false`, daily signal/backtest output records
+`sell_blocked` and continues holding the stock.
+
 ## Scope
 
 This project does not prepare raw market data. Upstream projects own downloads, qfq adjustment, PIT reference construction, ST/suspension/limit repair, and permanent source marts. This project reads those prepared DuckDB files through read-only adapters, then writes project-owned `vpa_*` derived tables, validation metrics, and reports.

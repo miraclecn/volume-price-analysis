@@ -23,6 +23,47 @@ diversification: by default at most one UNKNOWN holding is allowed, and
 `max_unknown_industry_names = 0` disables UNKNOWN entries. UNKNOWN holdings are
 reported as a separate risk exposure in backtest metrics and reports.
 
+Portfolio v2 builds targets from two ranked pools. Hard filters are applied
+first for BSE, ST, suspension, next-open buyability, ADV20, and v2 trade score.
+The core pool is selected first as the strong-signal priority set; if it does
+not fill `target_positions`, the candidate pool backfills the remaining slots.
+When candidates are insufficient, the portfolio keeps cash instead of forcing a
+full book.
+
+For v2, `horizon_d = 5` means the model is trained to forecast a five-day
+outcome; it is not a promise to hold exactly five days. The default holding
+policy gives the signal time to work with `min_hold_days = 3`,
+`target_hold_days = 5`, and `max_hold_days = 10`. Existing holdings are
+evaluated before new buys, so the target portfolio is retained holdings plus
+new entries, not a daily rebuild from zero.
+
+Buy and sell thresholds intentionally differ. The default buy threshold is
+`candidate_min_trade_score = 0.65`; the default score-exit threshold is
+`sell_score_threshold = 0.45`. This hysteresis reduces churn. A holding can
+exit through hard exits, risk exits, score exits, max-hold time exits, or
+`not_candidate_after_target_days` after the target holding period. Hard and
+risk exits can break `min_hold_days`; ordinary score deterioration cannot when
+`allow_score_exit_before_min_hold = false`.
+
+`core_pool` and `candidate_pool` are buy candidate pools only. Sell decisions
+come from the holding policy. If `can_sell_next_open = false`, a sell signal is
+recorded as `sell_blocked` and the stock remains held; the system must not
+assume that exit filled.
+
+`max_initial_entries` controls an empty or initial build. After holdings exist,
+`max_new_entries_per_day` limits only stocks that are not already held, so
+continuing holdings do not consume the daily new-entry budget. `hard_max_positions`
+remains the absolute final holding cap.
+
+Backtests and daily signals both use `construct_portfolio_targets_v2`. The
+constructor attaches one `ml_portfolio_construction_diagnostics` row per decision
+date with raw, hard-filtered, core, candidate, selected, and rejection counts.
+Rejection counts are overlapping diagnostics: a row can contribute to multiple
+reason counts, which is intentional for explaining sparse target days.
+Backtest report output includes portfolio diagnostics metrics and a
+`selected_count_distribution` CSV, so `wf_2020` can be checked for how often the
+portfolio selected 0, 1, 4, 8, 12, or other target counts.
+
 Command order:
 
 1. Run the VPA pipeline to produce `vpa_*` tables.
