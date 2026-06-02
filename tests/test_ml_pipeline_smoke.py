@@ -126,4 +126,4 @@ def test_ml_pipeline_v2_smoke_runs_without_industry_features(tmp_path):
     assert labels["active_label"].notna().all()
     assert predictions["score_version"].eq(SCORE_VERSION_THREE_MODEL).all()
     assert {"absolute_score", "active_score", "risk_prob", "trade_score_v2"}.issubset(scored.columns)
-    assert targets.empty or targets["target_weight"].sum() <= 1.0
+    assert targets.empty or targets.groupby("trade_date")["target_weight"].sum().le(1.0).all()
