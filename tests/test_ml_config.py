@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +28,13 @@ def test_default_ml_config_exposes_v2_flags_enabled():
     assert config.ml_v2["trade_score_v2_enabled"] is True
     assert config.ml_v2["daily_signal_v2_enabled"] is True
     assert config.universe["exclude_bse"] is True
+    assert config.portfolio["v2"]["holding"] == {
+        "min_hold_days": 3,
+        "target_hold_days": 5,
+        "max_hold_days": 10,
+    }
+    assert config.portfolio["v2"]["exit"]["sell_score_threshold"] == 0.45
+    assert config.portfolio["v2"]["exit"]["sell_score_threshold"] < config.portfolio["v2"]["candidate_min_trade_score"]
 
 
 def test_walkforward_config_uses_2015_start_and_named_folds():
@@ -176,4 +184,13 @@ def test_invalid_weight_bounds_are_rejected(tmp_path):
     )
 
     with pytest.raises(ValueError, match="single_name_min_weight"):
+        load_ml_config(path)
+
+
+def test_invalid_sell_threshold_without_hysteresis_is_rejected(tmp_path):
+    path = tmp_path / "bad-sell-threshold.toml"
+    text = Path("config/ml_default.toml").read_text(encoding="utf-8")
+    path.write_text(text.replace("sell_score_threshold = 0.45", "sell_score_threshold = 0.65"), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="sell_score_threshold"):
         load_ml_config(path)

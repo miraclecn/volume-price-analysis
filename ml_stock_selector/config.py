@@ -28,11 +28,13 @@ DEFAULT_ML_V2_CONFIG: dict[str, object] = {
     "daily_signal_v2_enabled": False,
     "candidate_absolute_min_rank_pct": 0.70,
     "candidate_active_min_rank_pct": 0.70,
-    "candidate_risk_max_rank_pct": 0.60,
-    "core_absolute_min_rank_pct": 0.80,
-    "core_active_min_rank_pct": 0.75,
-    "core_risk_max_rank_pct": 0.35,
-    "core_min_trade_score": 0.80,
+    "candidate_risk_max_rank_pct": 0.65,
+    "candidate_min_trade_score": 0.65,
+    "min_candidate_pool_size": 5,
+    "core_absolute_min_rank_pct": 0.75,
+    "core_active_min_rank_pct": 0.65,
+    "core_risk_max_rank_pct": 0.55,
+    "core_min_trade_score": 0.75,
 }
 
 
@@ -63,5 +65,12 @@ def _validate_config(config: MLConfig) -> None:
         raise ValueError("target_positions cannot exceed hard_max_positions")
     if portfolio["single_name_min_weight"] > portfolio["single_name_max_weight"]:
         raise ValueError("single_name_min_weight cannot exceed single_name_max_weight")
+    v2 = portfolio.get("v2", {})
+    if isinstance(v2, dict):
+        exit_config = v2.get("exit", {})
+        if isinstance(exit_config, dict) and "sell_score_threshold" in exit_config:
+            buy_threshold = float(v2.get("candidate_min_trade_score", config.ml_v2["candidate_min_trade_score"]))
+            if float(exit_config["sell_score_threshold"]) >= buy_threshold:
+                raise ValueError("sell_score_threshold must be below candidate_min_trade_score")
     if config.backtest["a_share_lot_size"] <= 0:
         raise ValueError("a_share_lot_size must be positive")
