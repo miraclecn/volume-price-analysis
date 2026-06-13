@@ -1,12 +1,47 @@
-# VPA-ML 系统重构改进计划
+# VPA-ML 系统重构改进计划 v2
 
 > 目标：将 `volume-price-analysis` 从“脚本 + DuckDB 表 + 零散 artifact + CLI/LLM 管理”的状态，重构为一个可复现、可审计、可展示、可接入实盘的机器学习量化研究与交易控制系统。
 
 ---
 
-## 0. 总体原则
+## 版本说明
 
-### 0.1 系统边界
+本版本基于当前 `volume-price-analysis` 最新代码状态修订。
+
+相较 v1，主要修改点：
+
+```text
+1. Phase 3 从“从零修复主键”改为“部分已完成，继续闭环 run/fold/strategy/score 维度”。
+2. Phase 7 新增 score-mode / fixed-horizon 回测实验矩阵。
+3. Phase 8 新增 score-mode、risk filter、risk exit、fixed-horizon 对比指标。
+4. Phase 9 将 fixed-horizon sleeve 纳入组合层设计。
+5. 保留 Phase 2 / 4 / 5 / 6 / 10 / 11 / 12 作为后续核心任务。
+```
+
+当前代码已经出现的方向：
+
+```text
+- backtest 输出表已开始加入 run_id / fold_id。
+- run_ml_backtest.py 已支持多 score-mode。
+- run_ml_backtest.py 已支持 fixed 5D 策略。
+- config/ml_default.toml 已增加 fixed_5d_risk_filter / fixed_5d_no_risk_exit 配置。
+```
+
+但还没有完全闭环的问题：
+
+```text
+- run_id / fold_id / strategy_id / score_version 尚未贯穿所有结果表。
+- ml_portfolio_targets_daily 仍未 run-aware。
+- fold_id、portfolio_id、strategy_id 在部分路径中仍有混用风险。
+- LightGBM 训练参数仍然没有完全从 config 注入训练函数。
+- run_manifest / fold_manifest / model_bundle / dashboard 仍未落地。
+```
+
+---
+
+# 0. 总体原则
+
+## 0.1 系统边界
 
 ```text
 alpha-data / Market Loom：
@@ -16,12 +51,12 @@ volume-price-analysis：
 负责 VPA 特征、ML feature mart、label、walk-forward、模型 artifact、回测、组合、信号、实盘监控、研究 dashboard
 ```
 
-### 0.2 重构优先级
+## 0.2 重构优先级
 
 ```text
-第一优先级：固化 run_id / fold_id / artifact / config / metrics
-第二优先级：保证不同实验结果不会互相覆盖
-第三优先级：让模型参数与配置严格一致
+第一优先级：固化 run_id / fold_id / strategy_id / score_version / artifact / config / metrics
+第二优先级：保证不同实验、不同策略、不同 score-mode 结果不会互相覆盖
+第三优先级：让模型训练参数与配置严格一致
 第四优先级：拆分研究训练与生产激活
 第五优先级：新增组合层和风控层
 第六优先级：做浏览器 dashboard
@@ -43,6 +78,7 @@ volume-price-analysis：
 [ ] 备份当前 outputs/ml/artifacts
 [ ] 导出当前所有关键 run 的回测结果
 [ ] 记录当前最优配置：expanding + 空置版本
+[ ] 记录当前 fixed_5d / score-mode 回测结果
 ```
 
 建议新增文件：
@@ -56,6 +92,8 @@ docs/refactor_baseline_202606.md
 ```text
 当前最佳模型版本
 当前最佳 walk-forward 结果
+当前 score-mode 对比结果
+当前 fixed-horizon 对比结果
 当前配置文件
 当前数据源路径
 当前模型 artifact 路径
@@ -96,7 +134,7 @@ VPA 不做：
 
 ## 1.2 VPA 只读取 alpha-data 输出
 
-VPA 侧只保留一个 read-only 数据健康检查：
+VPA 侧只保留 read-only 数据健康检查：
 
 ```text
 Data Health Card
@@ -122,7 +160,7 @@ incomplete trading dates
 
 # Phase 2：建立统一 run_id / fold_id / experiment 管理
 
-当前系统虽然部分表已经有 `run_id` / `fold_id` 字段，但它们没有贯穿所有结果表和 artifact，容易导致实验结果混淆。
+当前系统虽然部分表已经有 `run_id` / `fold_id` 字段，但它们还没有贯穿所有结果表、artifact、dashboard 和 production activation。
 
 ## 2.1 新增 `ml_runs`
 
@@ -223,13 +261,89 @@ class RunContext:
 
 ---
 
-# Phase 3：修复所有结果表主键，防止实验互相覆盖
+# Phase 3：修复结果表隔离，防止实验互相覆盖
 
-这是最高优先级之一。不同实验、不同模型、不同 fold 的结果必须能共存。
+## 3.0 当前代码状态校准
 
-## 3.1 修改 `ml_backtest_nav`
+当前代码已经完成了部分修复：
 
-建议字段：
+```text
+[已完成] ml_backtest_orders 已加入 run_id / fold_id
+[已完成] ml_backtest_positions 已加入 run_id / fold_id
+[已完成] ml_backtest_nav 已加入 run_id / fold_id
+[已完成] run_ml_backtest.py 已经把 run_id / fold_id 写入 nav / orders / positions
+[已完成] run_ml_backtest.py 已经使用 run_id / fold_id 清理 backtest 输出
+```
+
+但这仍然不是最终形态：
+
+```text
+[待完成] ml_backtest_nav 缺少 strategy_id / score_version
+[待完成] ml_backtest_positions 缺少 strategy_id / score_version
+[待完成] ml_backtest_orders 缺少 score_version / order_seq
+[待完成] ml_portfolio_targets_daily 仍未包含 run_id / fold_id / score_version
+[待完成] clear_portfolio_targets 仍按 portfolio_id + date 清理，存在跨 run 误删风险
+[待完成] fold_id 在部分路径中被赋值为 portfolio_id 或 fixed strategy id，后续需要严格拆分 fold_id、strategy_id、portfolio_id
+```
+
+## 3.1 命名语义必须拆清楚
+
+后续必须严格区分：
+
+```text
+run_id:
+    一次完整实验 / 训练 / 回测 / 信号生成的唯一 ID
+
+fold_id:
+    walk-forward 时间切片，例如 wf_2021
+
+strategy_id:
+    组合或交易规则，例如 holding_aware_v2、abs_ranker_fixed_5d_risk_filter_v1
+
+portfolio_id:
+    具体目标持仓集合 ID，可由 fold_id + strategy_id + suffix 组成
+
+score_version:
+    分数构造方式，例如 v2_three_model、v2_absolute_only、v2_absolute_risk_filter、v2_absolute_risk_sort
+```
+
+禁止长期使用：
+
+```text
+fold_id = portfolio_id
+fold_id = strategy_id
+```
+
+这会污染后续 dashboard 和实验归因。
+
+## 3.2 短期目标：保持当前代码兼容
+
+短期可接受 upsert key：
+
+```text
+ml_backtest_nav:
+    ["run_id", "fold_id", "sim_date"]
+
+ml_backtest_positions:
+    ["run_id", "fold_id", "sim_date", "code"]
+
+ml_backtest_orders:
+    ["run_id", "fold_id", "sim_date", "decision_date", "code", "side"]
+```
+
+短期验收标准：
+
+```text
+[ ] 连续跑两个不同 run_id，backtest nav 不互相覆盖
+[ ] 连续跑两个不同 score-mode，能通过不同 portfolio_id / fold_id 区分
+[ ] 重跑同一个 run_id + fold_id 可以覆盖自身
+```
+
+## 3.3 最终目标：所有回测输出都加入 strategy_id / score_version
+
+### 3.3.1 修改 `ml_backtest_nav`
+
+最终字段：
 
 ```sql
 run_id varchar not null,
@@ -244,9 +358,9 @@ turnover double,
 primary key (run_id, fold_id, strategy_id, score_version, sim_date)
 ```
 
-## 3.2 修改 `ml_backtest_positions`
+### 3.3.2 修改 `ml_backtest_positions`
 
-建议主键：
+最终主键：
 
 ```sql
 primary key (
@@ -259,9 +373,9 @@ primary key (
 )
 ```
 
-## 3.3 修改 `ml_backtest_orders`
+### 3.3.3 修改 `ml_backtest_orders`
 
-建议字段和主键：
+最终字段和主键：
 
 ```sql
 run_id varchar not null,
@@ -294,9 +408,30 @@ primary key (
 
 ## 3.4 修改 `ml_portfolio_targets_daily`
 
-建议主键：
+当前 `ml_portfolio_targets_daily` 仍然不是 run-aware。最终需要改成：
 
 ```sql
+run_id varchar not null,
+fold_id varchar not null,
+portfolio_id varchar not null,
+score_version varchar not null,
+trade_date varchar not null,
+code varchar not null,
+target_weight double,
+rank_n integer,
+trade_score double,
+entry_reason varchar,
+signal_action varchar,
+hold_reason varchar,
+exit_reason varchar,
+sell_blocked_reason varchar,
+entry_date varchar,
+entry_price double,
+shares double,
+holding_days integer,
+entry_trade_score double,
+latest_trade_score double,
+generated_at varchar,
 primary key (
     trade_date,
     run_id,
@@ -307,25 +442,35 @@ primary key (
 )
 ```
 
-## 3.5 修改所有 upsert key
+## 3.5 修改清理函数
 
-例如：
+当前：
+
+```text
+clear_portfolio_targets(con, portfolio_id, start_date, end_date)
+```
+
+需要升级为：
 
 ```python
-upsert_dataframe(
+clear_portfolio_targets(
     con,
-    "ml_backtest_nav",
-    result.nav,
-    ["run_id", "fold_id", "strategy_id", "score_version", "sim_date"]
+    run_id: str,
+    fold_id: str,
+    portfolio_id: str,
+    score_version: str,
+    start_date: str,
+    end_date: str,
 )
 ```
 
 验收标准：
 
 ```text
-[ ] 连续跑两个不同 run_id，结果不会互相覆盖
-[ ] 同一个 fold 重跑同一个 run_id 可以正确覆盖自身
-[ ] Dashboard 能同时展示多个 run 的 nav、orders、positions
+[ ] 不同 run_id 的 target 不会互相删除
+[ ] 不同 score_version 的 target 不会互相删除
+[ ] 不同 strategy_id 的 backtest 输出可以共存
+[ ] dashboard 能同时展示多个 run / fold / strategy / score_version
 ```
 
 ---
@@ -636,9 +781,9 @@ python scripts/activate_model_bundle.py \
 
 ---
 
-# Phase 7：重构 walk-forward 实验入口
+# Phase 7：重构 walk-forward 与回测实验入口
 
-## 7.1 新增正式 CLI
+## 7.1 新增正式 walk-forward CLI
 
 新增：
 
@@ -666,7 +811,7 @@ python scripts/run_ml_walkforward.py \
 --force
 ```
 
-## 7.2 明确四类实验配置
+## 7.2 明确四类训练实验配置
 
 建议配置目录：
 
@@ -717,12 +862,71 @@ rolling5_gap
 rolling5_nogap
 ```
 
+## 7.4 回测实验矩阵标准化
+
+当前 `run_ml_backtest.py` 已支持多种 score-mode 和 fixed-horizon 策略。后续所有回测实验必须显式记录：
+
+```text
+run_id
+fold_id
+strategy_id
+score_version
+portfolio_id
+score_mode
+holding_policy
+risk_exit_policy
+```
+
+标准实验矩阵：
+
+| 类型 | score_mode / strategy_id | score_version | 用途 |
+|---|---|---|---|
+| holding-aware 三模型 | `three_model` | `v2_three_model` | 当前主线组合 |
+| 绝对收益排序 | `absolute_only` | `v2_absolute_only` | 检查 active/risk 是否真的增益 |
+| 绝对收益 + 风险过滤 | `absolute_risk_filter` | `v2_absolute_risk_filter` | 检查 risk model 的过滤价值 |
+| 绝对收益 + 风险排序惩罚 | `absolute_risk_sort` | `v2_absolute_risk_sort` | 检查风险排序惩罚是否提高收益回撤比 |
+| 固定 5 日 + 风险退出 | `abs_ranker_fixed_5d_risk_filter_v1` | strategy_id | 固定持有期基准 |
+| 固定 5 日无风险退出 | `abs_ranker_fixed_5d_no_risk_exit_v1` | strategy_id | 检查 risk exit 是否有效 |
+
+## 7.5 回测命令规范
+
+建议统一为：
+
+```bash
+python scripts/run_ml_backtest.py \
+  --config config/ml_default.toml \
+  --run-id 20260613_expanding_gap_v1 \
+  --fold-id wf_2021 \
+  --score-mode three_model \
+  --strategy-id holding_aware_v2
+```
+
+fixed-horizon：
+
+```bash
+python scripts/run_ml_backtest.py \
+  --config config/ml_default.toml \
+  --run-id 20260613_expanding_gap_v1 \
+  --fold-id wf_2021 \
+  --strategy-id abs_ranker_fixed_5d_risk_filter_v1
+```
+
+要求：
+
+```text
+[ ] score-mode 实验不能污染原始 predictions
+[ ] 不同 score-mode 输出不同 score_version
+[ ] 不同 strategy_id 输出不同 backtest result
+[ ] fold_id 保持原始 wf_xxxx，不被 portfolio_id 覆盖
+```
+
 验收标准：
 
 ```text
 [ ] 四种训练方式可以用统一入口跑
 [ ] 每种方式生成的 fold 可打印、可审计、可入库
-[ ] 不同实验结果不会互相覆盖
+[ ] 多 score-mode / fixed-horizon 回测结果不会互相覆盖
+[ ] dashboard 可以按 run_id / fold_id / strategy_id / score_version 筛选
 ```
 
 ---
@@ -800,11 +1004,38 @@ aggressive_year_capture_ratio
 capture = 72 / 120 = 60%
 ```
 
+## 8.4 score-mode / fixed-horizon 对比指标
+
+新增：
+
+```text
+score_mode_return_delta
+score_mode_drawdown_delta
+risk_filter_return_delta
+risk_filter_drawdown_delta
+risk_exit_benefit
+fixed_horizon_vs_holding_aware_delta
+absolute_only_vs_three_model_delta
+absolute_risk_sort_vs_risk_filter_delta
+```
+
+这些指标用于回答：
+
+```text
+risk model 到底有没有用？
+active ranker 到底有没有用？
+holding-aware 是否优于固定 5 日？
+risk exit 是降低回撤，还是吃掉收益？
+absolute_risk_sort 是否优于简单 risk_filter？
+```
+
 验收标准：
 
 ```text
 [ ] dashboard 不只展示总年化，也展示最差年份和高收益捕捉率
 [ ] 每个模型能明确归类为 core / aggressive / disabled
+[ ] 每个 score-mode 的收益、回撤、Calmar 可横向对比
+[ ] fixed-horizon 与 holding-aware 可横向对比
 [ ] 选择模型不再只看平均收益
 ```
 
@@ -815,7 +1046,7 @@ capture = 72 / 120 = 60%
 目标：
 
 ```text
-核心模型 + 激进模型 + 市场状态 + 模型健康 + 回撤控制
+核心模型 + 激进模型 + fixed-horizon sleeve + 市场状态 + 模型健康 + 回撤控制
 ```
 
 ## 9.1 新增模块
@@ -829,7 +1060,30 @@ ml_stock_selector/strategy/
   risk_budget.py
 ```
 
-## 9.2 市场状态表
+## 9.2 策略 sleeve 设计
+
+建议组合层拆为四个 sleeve：
+
+```text
+core sleeve:
+    expanding_gap holding-aware model
+    目标：稳定收益，全年运行
+
+aggressive sleeve:
+    no_gap / rolling5 / high elasticity model
+    目标：risk_on 阶段提升收益弹性
+
+fixed-horizon sleeve:
+    fixed_5d_risk_filter
+    fixed_5d_no_risk_exit
+    目标：作为持仓规则基准，也可在强势短周期行情中启用
+
+cash sleeve:
+    regime / drawdown control
+    目标：风险状态下保护净值
+```
+
+## 9.3 市场状态表
 
 ```sql
 create table if not exists ml_market_regime_daily (
@@ -844,12 +1098,14 @@ create table if not exists ml_market_regime_daily (
 );
 ```
 
-## 9.3 模型健康表
+## 9.4 模型健康表
 
 ```sql
 create table if not exists ml_model_health_daily (
     trade_date varchar not null,
     model_or_bundle_id varchar not null,
+    strategy_id varchar,
+    score_version varchar,
     rolling_20d_return double,
     rolling_60d_return double,
     rolling_20d_drawdown double,
@@ -857,51 +1113,56 @@ create table if not exists ml_model_health_daily (
     equity_above_ma60 boolean,
     enabled_by_health boolean,
     reason varchar,
-    primary key (trade_date, model_or_bundle_id)
+    primary key (trade_date, model_or_bundle_id, strategy_id, score_version)
 );
 ```
 
-## 9.4 策略分配表
+## 9.5 策略分配表
 
 ```sql
 create table if not exists ml_strategy_allocation_daily (
     trade_date varchar not null,
     strategy_id varchar not null,
-    bundle_id varchar not null,
-    role varchar,                  -- core / aggressive / cash
+    sleeve varchar not null,             -- core / aggressive / fixed_horizon / cash
+    bundle_id varchar,
+    score_version varchar,
     raw_weight double,
     regime_multiplier double,
     health_multiplier double,
     drawdown_multiplier double,
     final_weight double,
     reason varchar,
-    primary key (trade_date, strategy_id, bundle_id)
+    primary key (trade_date, strategy_id, sleeve, bundle_id, score_version)
 );
 ```
 
-## 9.5 初始风险预算规则
+## 9.6 初始风险预算规则
 
 市场状态分配：
 
 ```text
 risk_on:
-    core 60%
-    aggressive 30%
+    core 55%
+    aggressive 25%
+    fixed_horizon 10%
     cash 10%
 
 neutral:
     core 60%
-    aggressive 10%
-    cash 30%
+    aggressive 5%-10%
+    fixed_horizon 0%-10%
+    cash 20%-30%
 
 risk_off:
     core 30%
     aggressive 0%
+    fixed_horizon 0%
     cash 70%
 
 crash:
     core 0%-10%
     aggressive 0%
+    fixed_horizon 0%
     cash 90%-100%
 ```
 
@@ -920,8 +1181,9 @@ crash:
 ```text
 [ ] core 模型全年可运行
 [ ] aggressive 模型只有 risk_on 且自身健康时启用
+[ ] fixed-horizon sleeve 可独立打开 / 关闭
 [ ] 组合层可以单独回测
-[ ] 组合层结果和单模型结果可对比
+[ ] 组合层结果和单模型 / 单 score-mode / fixed-horizon 结果可对比
 ```
 
 ---
@@ -939,6 +1201,8 @@ create table if not exists live_target_positions (
     target_weight double,
     target_value double,
     source_bundle_id varchar,
+    source_sleeve varchar,
+    score_version varchar,
     reason varchar,
     generated_at varchar,
     primary key (trade_date, account_id, strategy_id, code)
@@ -1053,12 +1317,14 @@ dashboard/
   pages/
     1_Run_Registry.py
     2_Walkforward_Compare.py
-    3_Fold_Detail.py
-    4_Model_Bundle.py
-    5_Portfolio_Diagnostics.py
-    6_Signal_Preview.py
-    7_Live_Monitor.py
-    8_Data_Health.py
+    3_Score_Mode_Compare.py
+    4_Fixed_Horizon_Compare.py
+    5_Fold_Detail.py
+    6_Model_Bundle.py
+    7_Portfolio_Diagnostics.py
+    8_Signal_Preview.py
+    9_Live_Monitor.py
+    10_Data_Health.py
 ```
 
 ## 11.2 Run Registry 页面
@@ -1095,7 +1361,34 @@ Calmar
 高收益捕捉率
 ```
 
-## 11.4 Fold Detail 页面
+## 11.4 Score Mode Compare 页面
+
+显示：
+
+```text
+three_model
+absolute_only
+absolute_risk_filter
+absolute_risk_sort
+return_delta
+drawdown_delta
+calmar_delta
+risk_filter_benefit
+```
+
+## 11.5 Fixed Horizon Compare 页面
+
+显示：
+
+```text
+holding-aware
+fixed_5d_risk_filter
+fixed_5d_no_risk_exit
+risk_exit_benefit
+fixed_vs_holding_aware_delta
+```
+
+## 11.6 Fold Detail 页面
 
 显示：
 
@@ -1112,7 +1405,7 @@ UNKNOWN 暴露
 过滤原因
 ```
 
-## 11.5 Model Bundle 页面
+## 11.7 Model Bundle 页面
 
 显示：
 
@@ -1125,10 +1418,10 @@ params_json
 train_metrics
 artifact path
 是否 active
-是否 core/aggressive
+是否 core/aggressive/fixed_horizon
 ```
 
-## 11.6 Signal Preview 页面
+## 11.8 Signal Preview 页面
 
 显示：
 
@@ -1146,9 +1439,11 @@ entry_reason
 exit_reason
 sell_blocked_reason
 exclusion_reason
+source_sleeve
+score_version
 ```
 
-## 11.7 Live Monitor 页面
+## 11.9 Live Monitor 页面
 
 显示：
 
@@ -1163,7 +1458,7 @@ exclusion_reason
 QMT 状态
 ```
 
-## 11.8 Data Health 页面
+## 11.10 Data Health 页面
 
 只显示 alpha-data 摘要，不管理 alpha-data：
 
@@ -1200,13 +1495,32 @@ tests/test_ml_schema_run_keys.py
 检查：
 
 ```text
-[ ] backtest_nav 主键包含 run_id/fold_id
-[ ] positions 主键包含 run_id/fold_id
-[ ] orders 主键包含 run_id/fold_id
-[ ] targets 主键包含 run_id/fold_id/score_version
+[ ] backtest_nav 包含 run_id/fold_id
+[ ] positions 包含 run_id/fold_id
+[ ] orders 包含 run_id/fold_id
+[ ] targets 包含 run_id/fold_id/score_version
 ```
 
-## 12.2 Artifact 测试
+## 12.2 Backtest isolation 测试
+
+新增：
+
+```text
+tests/test_run_isolation.py
+```
+
+流程：
+
+```text
+[ ] 跑 run_A
+[ ] 跑 run_B
+[ ] 确认 run_A nav 没被覆盖
+[ ] 确认 run_B nav 独立存在
+[ ] 跑同一 run 的 two score-mode
+[ ] 确认 score-mode 输出不互相覆盖
+```
+
+## 12.3 Artifact 测试
 
 新增：
 
@@ -1223,7 +1537,7 @@ tests/test_artifact_manifest.py
 [ ] manifest 中路径真实存在
 ```
 
-## 12.3 配置生效测试
+## 12.4 配置生效测试
 
 新增：
 
@@ -1239,24 +1553,42 @@ tests/test_model_config_applied.py
 [ ] registry.params_json 与 artifact params.json 一致
 ```
 
-## 12.4 实验隔离测试
+## 12.5 Score-mode 测试
 
 新增：
 
 ```text
-tests/test_run_isolation.py
+tests/test_score_modes.py
 ```
 
-流程：
+检查：
 
 ```text
-[ ] 跑 run_A
-[ ] 跑 run_B
-[ ] 确认 run_A nav 没被覆盖
-[ ] 确认 run_B nav 独立存在
+[ ] three_model 输出 v2_three_model
+[ ] absolute_only 输出 v2_absolute_only
+[ ] absolute_risk_filter 输出 v2_absolute_risk_filter
+[ ] absolute_risk_sort 输出 v2_absolute_risk_sort
+[ ] 不同 score-mode 不污染原始 prediction rows
 ```
 
-## 12.5 生产激活测试
+## 12.6 Fixed-horizon 测试
+
+新增：
+
+```text
+tests/test_fixed_horizon_backtest.py
+```
+
+检查：
+
+```text
+[ ] fixed_5d_risk_filter 可以独立回测
+[ ] fixed_5d_no_risk_exit 可以独立回测
+[ ] risk_exit 开关对结果产生可追踪差异
+[ ] fixed-horizon 输出有 strategy_id
+```
+
+## 12.7 生产激活测试
 
 新增：
 
@@ -1280,16 +1612,17 @@ tests/test_model_bundle_activation.py
 
 ```text
 [ ] Phase 0：冻结当前系统
-[ ] Phase 2：新增 ml_runs / ml_run_folds / RunContext
-[ ] Phase 3：修复所有弱主键和 upsert key
+[ ] Phase 3：把当前 run_id/fold_id 隔离做完整，避免继续覆盖实验结果
 [ ] Phase 5：让 LightGBM 参数真正从 config 生效
+[ ] Phase 7.4：把 score-mode / fixed-horizon 实验矩阵标准化
 ```
 
-完成后，实验不会互相覆盖，也能确认“参数固定”是真的固定。
+完成后，当前已有的多策略回测不会继续混淆。
 
-## 第 2 批：artifact 固化
+## 第 2 批：实验管理固化
 
 ```text
+[ ] Phase 2：新增 ml_runs / ml_run_folds / RunContext
 [ ] Phase 4：完整 run/fold/model artifact 目录
 [ ] manifest 化 config / data / feature / label / model / metrics
 [ ] 所有模型注册写入 run_id/fold_id/params_json/metrics_json
@@ -1310,8 +1643,8 @@ tests/test_model_bundle_activation.py
 ## 第 4 批：组合系统
 
 ```text
-[ ] Phase 8：补齐核心指标
-[ ] Phase 9：新增 core/aggressive/regime/risk_budget 策略组合层
+[ ] Phase 8：补齐核心指标与 score-mode / fixed-horizon 对比指标
+[ ] Phase 9：新增 core/aggressive/fixed_horizon/cash 策略组合层
 ```
 
 完成后，才能系统性解决“抓住 100%+ 年份，但避免负收益和 30%+ 回撤”。
@@ -1341,6 +1674,8 @@ volume-price-analysis
     ├── label builder
     ├── run manager
     ├── walk-forward engine
+    ├── score-mode experiment engine
+    ├── fixed-horizon backtest engine
     ├── model artifact registry
     ├── backtest engine
     ├── strategy allocation layer
@@ -1368,6 +1703,6 @@ LLM 的角色变成：
 
 # 一句话总结
 
-先把 `run_id`、`artifact`、`schema`、`config`、`metrics`、`backtest result` 固化，再做浏览器界面。
+先把 `run_id`、`fold_id`、`strategy_id`、`score_version`、`artifact`、`schema`、`config`、`metrics`、`backtest result` 固化，再做浏览器界面。
 
 VPA UI 应该是研究与实盘控制台，不是数据底座控制台。
