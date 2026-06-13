@@ -64,6 +64,28 @@ Backtest report output includes portfolio diagnostics metrics and a
 `selected_count_distribution` CSV, so `wf_2020` can be checked for how often the
 portfolio selected 0, 1, 4, 8, 12, or other target counts.
 
+The fixed five-day baseline is separate from portfolio v2. Use
+`abs_ranker_fixed_5d_risk_filter_v1` with
+`[portfolio.fixed_5d_risk_filter]` to test a cleaner execution horizon:
+T-day features generate a signal, T+1 open buys, and the default exit is after
+five trading holding days. The Absolute Ranker is judged against the fixed
+T+1-open to T+6-close return; the Risk Model is judged as an entry filter and,
+when enabled, as the only early exit. This profile intentionally disables
+`score_exit`, `not_candidate_after_target_days`, `trailing_profit_exit`, dynamic
+sell scores, and candidate-pool/TopN drop exits. A holding with a lower current
+absolute rank still remains until `holding_days >= 5` unless `risk_exit` fires.
+If `can_sell_next_open = false`, the sell is blocked and the holding is carried
+forward for another attempt.
+
+Use `abs_ranker_fixed_5d_no_risk_exit_v1` with
+`[portfolio.fixed_5d_no_risk_exit]` as the control. It keeps the same entry
+filters and five-trading-day time exit but disables holding-period `risk_exit`,
+so fold reports can compare whether `risk_exit` improves return or drawdown.
+For fixed-horizon runs, inspect average/median/max holding days, buy/sell
+counts, `risk_exit_count`, `time_exit_count`, `sell_blocked_count`, average
+entry absolute/risk ranks, average cash ratio, and realized returns by exit
+reason.
+
 Command order:
 
 1. Run the VPA pipeline to produce `vpa_*` tables.

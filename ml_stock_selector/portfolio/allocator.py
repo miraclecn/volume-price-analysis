@@ -35,7 +35,11 @@ def allocate_weights(
         out["target_weight"] = 0.0
         out.attrs.update(attrs)
         return out
-    weight = min(max(1.0 / active_count, min_weight), max_weight)
+    equal_weight = 1.0 / active_count
+    if active_count * min_weight <= 1.0:
+        weight = min(max(equal_weight, min_weight), max_weight)
+    else:
+        weight = min(equal_weight, max_weight)
     out["target_weight"] = 0.0
     out.loc[active_mask, "target_weight"] = weight
     if not allow_cash:

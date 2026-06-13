@@ -9,6 +9,7 @@ from ml_stock_selector.contracts.alpha_data_contract import (
     validate_alpha_data_contract,
 )
 from ml_stock_selector.data_access import (
+    load_live_unadjusted_stock_bars,
     load_normalized_stock_bars,
     load_optional_industry_benchmark_returns,
     load_optional_market_benchmark_returns,
@@ -114,3 +115,43 @@ def test_load_normalized_stock_bars_supports_compact_source_dates(tmp_path):
 
     assert set(loaded["trade_date"]) == {"2024-01-03", "2024-01-04"}
     assert len(loaded) == 8
+
+
+def test_load_live_unadjusted_stock_bars_uses_raw_prices_and_rescales_limits(tmp_path):
+    research_db = create_alpha_data_db(tmp_path / "research_source.duckdb")
+    raw_db = tmp_path / "raw.duckdb"
+    con = duckdb.connect(str(raw_db))
+    con.execute(
+        """
+        create table raw_kline_unadj (
+            ts_code varchar,
+            trade_date varchar,
+            open double,
+            high double,
+            low double,
+            close double,
+            pre_close double,
+            vol double,
+            amount double
+        )
+        """
+    )
+    con.execute(
+        "insert into raw_kline_unadj values ('000001.SZ', '20240103', 5.0, 5.5, 4.8, 5.25, 5.0, 1234, 6543.21)"
+    )
+    con.close()
+
+    loaded = load_live_unadjusted_stock_bars(str(research_db), "2024-01-03", "2024-01-03")
+    row = loaded[loaded["code"] == "000001.SZ"].iloc[0]
+    normalized = load_normalized_stock_bars(str(research_db), "2024-01-03", "2024-01-03")
+    normalized_row = normalized[normalized["code"] == "000001.SZ"].iloc[0]
+    adjustment_ratio = float(normalized_row["close"]) / 5.25
+
+    assert row["open"] == pytest.approx(5.0)
+    assert row["high"] == pytest.approx(5.5)
+    assert row["low"] == pytest.approx(4.8)
+    assert row["close"] == pytest.approx(5.25)
+    assert row["prev_close"] == pytest.approx(5.0)
+    assert row["volume"] == pytest.approx(123400)
+    assert row["amount"] == pytest.approx(6543210)
+    assert row["limit_up"] == pytest.approx(float(normalized_row["limit_up"]) / adjustment_ratio)

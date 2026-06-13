@@ -51,6 +51,43 @@ turnover. `max_new_entries_per_day` limits only new names, never retained
 holdings. If `can_sell_next_open = false`, daily signal/backtest output records
 `sell_blocked` and continues holding the stock.
 
+`abs_ranker_fixed_5d_risk_filter_v1` is a low-overfitting baseline strategy for
+checking whether the Absolute Ranker predicts the fixed T+1 open to T+6 close
+return and whether the Risk Model filters large drawdown risk. It uses
+`[portfolio.fixed_5d_risk_filter]`: buy candidates must pass hard tradability,
+ADV20, BSE/ST/paused, next-open buyability, absolute-rank, and risk-entry
+filters; then they are held for five trading days by default. During the holding
+period it does not use `score_exit`, `not_candidate_after_target_days`,
+`trailing_profit_exit`, dynamic sell scores, or TopN/candidate-pool drop exits.
+Only `risk_exit` can sell early; if next-open selling is blocked, the position
+continues. The comparison profile
+`abs_ranker_fixed_5d_no_risk_exit_v1` disables holding-period `risk_exit` while
+keeping the same fixed five-day time exit.
+
+Example fixed-horizon backtests:
+
+```bash
+python scripts/run_ml_backtest.py \
+  --config config/ml_walkforward.toml \
+  --ml-db outputs/ml/ml.duckdb \
+  --run-id <RUN_ID> \
+  --strategy-id abs_ranker_fixed_5d_risk_filter_v1 \
+  --score-version <SCORE_VERSION> \
+  --feature-set-id vpa_d_sequence \
+  --horizon-d 5 \
+  --label-base from_next_open
+
+python scripts/run_ml_backtest.py \
+  --config config/ml_walkforward.toml \
+  --ml-db outputs/ml/ml.duckdb \
+  --run-id <RUN_ID> \
+  --strategy-id abs_ranker_fixed_5d_no_risk_exit_v1 \
+  --score-version <SCORE_VERSION> \
+  --feature-set-id vpa_d_sequence \
+  --horizon-d 5 \
+  --label-base from_next_open
+```
+
 ## Scope
 
 This project does not prepare raw market data. Upstream projects own downloads, qfq adjustment, PIT reference construction, ST/suspension/limit repair, and permanent source marts. This project reads those prepared DuckDB files through read-only adapters, then writes project-owned `vpa_*` derived tables, validation metrics, and reports.

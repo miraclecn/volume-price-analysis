@@ -110,6 +110,37 @@ def test_v2_candidate_pool_can_select_when_core_pool_is_empty():
     assert set(targets["entry_reason"]) == {"candidate_pool"}
 
 
+def test_v2_bucketed_selection_takes_leaders_from_each_score_bucket():
+    data = _v2_candidates(40)
+
+    targets = construct_portfolio_targets_v2(
+        data,
+        _constraints(
+            target_positions=12,
+            core_min_trade_score=0.451,
+            candidate_min_trade_score=0.451,
+            selection_bucket_count=4,
+            selection_per_bucket=3,
+        ),
+        "p1",
+    )
+
+    assert targets["code"].tolist() == [
+        "s00",
+        "s01",
+        "s02",
+        "s10",
+        "s11",
+        "s12",
+        "s20",
+        "s21",
+        "s22",
+        "s30",
+        "s31",
+        "s32",
+    ]
+
+
 def test_v2_hard_filters_include_bse_st_pause_buy_liquidity_and_trade_score():
     data = _v2_candidates(7)
     data.loc[1, "is_bse"] = True

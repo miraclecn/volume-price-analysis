@@ -18,6 +18,10 @@ def register_model(
     params_json: str = "{}",
     metrics_json: str = "{}",
     notes: str | None = None,
+    run_id: str | None = None,
+    fold_id: str | None = None,
+    feature_store_version: str | None = None,
+    feature_schema_hash: str | None = None,
     train_start: str | None = None,
     train_end: str | None = None,
     valid_start: str | None = None,
@@ -26,15 +30,21 @@ def register_model(
     test_end: str | None = None,
 ) -> None:
     now = datetime.now(timezone.utc).isoformat()
+    _ensure_registry_columns(con)
     con.execute(
         """
         insert into ml_model_registry (
             model_id, model_type, feature_set_id, label_name, label_base, horizon_d,
+            run_id, fold_id, feature_store_version, feature_schema_hash,
             train_start, train_end, valid_start, valid_end, test_start, test_end,
             params_json, metrics_json, feature_schema_uri, artifact_uri,
             is_active, activated_at, deactivated_at, created_at, notes
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, null, null, ?, ?)
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, null, null, ?, ?)
         on conflict (model_id) do update set
+            run_id = excluded.run_id,
+            fold_id = excluded.fold_id,
+            feature_store_version = excluded.feature_store_version,
+            feature_schema_hash = excluded.feature_schema_hash,
             train_start = excluded.train_start,
             train_end = excluded.train_end,
             valid_start = excluded.valid_start,
@@ -54,6 +64,10 @@ def register_model(
                 label_name,
                 label_base,
                 horizon_d,
+                run_id,
+                fold_id,
+                feature_store_version,
+                feature_schema_hash,
                 train_start,
                 train_end,
                 valid_start,
@@ -68,6 +82,16 @@ def register_model(
             notes,
         ],
     )
+
+
+def _ensure_registry_columns(con) -> None:
+    for sql in [
+        "alter table ml_model_registry add column if not exists run_id varchar",
+        "alter table ml_model_registry add column if not exists fold_id varchar",
+        "alter table ml_model_registry add column if not exists feature_store_version varchar",
+        "alter table ml_model_registry add column if not exists feature_schema_hash varchar",
+    ]:
+        con.execute(sql)
 
 
 def activate_model(con, model_id: str) -> None:

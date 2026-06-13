@@ -3,7 +3,7 @@ from __future__ import annotations
 import duckdb
 import pandas as pd
 
-from ml_stock_selector.storage import init_ml_db, upsert_dataframe
+from ml_stock_selector.storage import clear_backtest_outputs, clear_portfolio_targets, init_ml_db, upsert_dataframe
 
 
 def test_init_ml_db_creates_required_ml_tables(tmp_path):
@@ -171,6 +171,63 @@ def test_backtest_metrics_schema_allows_multiple_folds_per_run(tmp_path):
     ).fetchone()
     con.close()
     assert row == (2, 0.30000000000000004)
+
+
+def test_backtest_outputs_are_fold_scoped_and_clearable(tmp_path):
+    con = init_ml_db(tmp_path / "ml.duckdb")
+
+    for table_name in ["ml_backtest_orders", "ml_backtest_positions", "ml_backtest_nav"]:
+        assert "fold_id" in _columns(con, table_name)
+
+    orders = pd.DataFrame(
+        [
+            {"run_id": "run", "fold_id": "wf_2020", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "a", "side": "buy", "status": "filled"},
+            {"run_id": "run", "fold_id": "wf_2021", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "b", "side": "buy", "status": "filled"},
+            {"run_id": "run", "sim_date": "2020-01-04", "decision_date": "2020-01-03", "code": "legacy", "side": "sell", "status": "filled"},
+        ]
+    )
+    positions = pd.DataFrame(
+        [
+            {"run_id": "run", "fold_id": "wf_2020", "sim_date": "2020-01-03", "code": "a"},
+            {"run_id": "run", "fold_id": "wf_2021", "sim_date": "2020-01-03", "code": "b"},
+            {"run_id": "run", "sim_date": "2020-01-04", "code": "legacy"},
+        ]
+    )
+    nav = pd.DataFrame(
+        [
+            {"run_id": "run", "fold_id": "wf_2020", "sim_date": "2020-01-03", "nav": 1.0, "cash": 1.0, "gross_exposure": 0.0, "turnover": 0.0},
+            {"run_id": "run", "fold_id": "wf_2021", "sim_date": "2020-01-03", "nav": 2.0, "cash": 2.0, "gross_exposure": 0.0, "turnover": 0.0},
+            {"run_id": "run", "sim_date": "2020-01-04", "nav": 3.0, "cash": 3.0, "gross_exposure": 0.0, "turnover": 0.0},
+        ]
+    )
+    upsert_dataframe(con, "ml_backtest_orders", orders, ["run_id", "fold_id", "sim_date", "decision_date", "code", "side"])
+    upsert_dataframe(con, "ml_backtest_positions", positions, ["run_id", "fold_id", "sim_date", "code"])
+    upsert_dataframe(con, "ml_backtest_nav", nav, ["run_id", "fold_id", "sim_date"])
+
+    clear_backtest_outputs(con, "run", "wf_2020", "2020-01-02", "2020-01-04")
+
+    assert con.execute("select code from ml_backtest_orders order by code").fetchall() == [("b",)]
+    assert con.execute("select code from ml_backtest_positions order by code").fetchall() == [("b",)]
+    assert con.execute("select fold_id, nav from ml_backtest_nav").fetchall() == [("wf_2021", 2.0)]
+    con.close()
+
+
+def test_portfolio_targets_are_clearable_by_portfolio_and_date_range(tmp_path):
+    con = init_ml_db(tmp_path / "ml.duckdb")
+    targets = pd.DataFrame(
+        [
+            {"trade_date": "2020-01-02", "portfolio_id": "wf_2020", "code": "a"},
+            {"trade_date": "2020-01-03", "portfolio_id": "wf_2020", "code": "b"},
+            {"trade_date": "2020-01-03", "portfolio_id": "wf_2021", "code": "c"},
+        ]
+    )
+    upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "portfolio_id", "code"])
+
+    clear_portfolio_targets(con, "wf_2020", "2020-01-01", "2020-01-31")
+
+    rows = con.execute("select portfolio_id, code from ml_portfolio_targets_daily order by code").fetchall()
+    con.close()
+    assert rows == [("wf_2021", "c")]
 
 
 def _columns(con, table_name: str) -> set[str]:

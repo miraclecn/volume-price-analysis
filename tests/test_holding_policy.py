@@ -96,3 +96,22 @@ def test_can_sell_false_blocks_exit():
     assert decision.should_sell is True
     assert decision.reason == "score_exit"
     assert decision.blocked is True
+
+
+def test_missing_boolean_tradeability_fields_use_defaults():
+    decision = evaluate_sell_decision(
+        _holding(holding_days=5),
+        _latest(
+            is_bse=pd.NA,
+            is_st=pd.NA,
+            data_quality_high_severity=pd.NA,
+            can_sell_next_open=pd.NA,
+            in_candidate_pool=pd.NA,
+            trade_score_v2=0.80,
+        ),
+        HoldingPolicy(target_hold_days=5),
+    )
+
+    assert decision.should_sell is True
+    assert decision.reason == "not_candidate_after_target_days"
+    assert decision.blocked is False

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 
 import pandas as pd
 
@@ -300,7 +301,7 @@ def _select_from_v2_pools(
 
     core_codes = set(core_pool.get("code", pd.Series(dtype=object)).astype(str))
     ordered_pools = [
-        ("core_pool", _sort_pool(core_pool)),
+        ("core_pool", _sort_pool_for_selection(core_pool, constraints)),
         (
             "candidate_pool",
             _sort_pool(candidate_pool[~candidate_pool["code"].astype(str).isin(core_codes)].copy())
@@ -528,6 +529,33 @@ def _sort_pool(pool: pd.DataFrame) -> pd.DataFrame:
         return pool.copy()
     score_column = "trade_score_v2" if "trade_score_v2" in pool else "trade_score"
     return pool.sort_values([score_column, "code"], ascending=[False, True]).copy()
+
+
+def _sort_pool_for_selection(pool: pd.DataFrame, constraints: PortfolioConstraints) -> pd.DataFrame:
+    sorted_pool = _sort_pool(pool)
+    if (
+        sorted_pool.empty
+        or constraints.selection_bucket_count <= 0
+        or constraints.selection_per_bucket <= 0
+    ):
+        return sorted_pool
+    buckets = _rank_buckets(sorted_pool, constraints.selection_bucket_count)
+    head_indices: list[object] = []
+    for bucket in buckets:
+        head_indices.extend(bucket.head(constraints.selection_per_bucket).index.tolist())
+    seen = set(head_indices)
+    tail_indices = [idx for idx in sorted_pool.index.tolist() if idx not in seen]
+    return sorted_pool.loc[head_indices + tail_indices].copy()
+
+
+def _rank_buckets(sorted_pool: pd.DataFrame, bucket_count: int) -> list[pd.DataFrame]:
+    if sorted_pool.empty:
+        return []
+    bucket_size = math.ceil(len(sorted_pool) / bucket_count)
+    return [
+        sorted_pool.iloc[start : start + bucket_size]
+        for start in range(0, len(sorted_pool), bucket_size)
+    ]
 
 
 def _held_codes(current_holdings: pd.DataFrame | None) -> set[str]:

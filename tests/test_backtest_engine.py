@@ -79,6 +79,38 @@ def test_backtest_empty_daily_decision_liquidates_previous_holdings():
     assert result.nav.set_index("sim_date").loc["2024-01-04", "gross_exposure"] == 0.0
 
 
+def test_backtest_scales_buys_to_available_cash_and_never_goes_negative():
+    targets = pd.DataFrame(
+        [
+            {"trade_date": "2024-01-02", "portfolio_id": "p1", "code": "a", "target_weight": 0.8, "rank_n": 1, "trade_score": 0.9},
+            {"trade_date": "2024-01-03", "portfolio_id": "p1", "code": "a", "target_weight": 0.8, "rank_n": 1, "trade_score": 0.9, "signal_action": "hold"},
+            {"trade_date": "2024-01-03", "portfolio_id": "p1", "code": "b", "target_weight": 0.8, "rank_n": 2, "trade_score": 0.8},
+        ]
+    )
+    bars = pd.DataFrame(
+        [
+            {"trade_date": "2024-01-02", "code": "a", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "limit_up": 11.0, "limit_down": 9.0, "is_paused": False},
+            {"trade_date": "2024-01-03", "code": "a", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "limit_up": 11.0, "limit_down": 9.0, "is_paused": False},
+            {"trade_date": "2024-01-03", "code": "b", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "limit_up": 11.0, "limit_down": 9.0, "is_paused": False},
+            {"trade_date": "2024-01-04", "code": "a", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "limit_up": 11.0, "limit_down": 9.0, "is_paused": False},
+            {"trade_date": "2024-01-04", "code": "b", "open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "limit_up": 11.0, "limit_down": 9.0, "is_paused": False},
+        ]
+    )
+
+    result = run_backtest(
+        targets,
+        bars,
+        BacktestConfig(1000.0, "p1", ExecutionConfig(slippage_bps=0, commission_bps=0, stamp_duty_bps=0)),
+    )
+
+    day4 = result.nav.set_index("sim_date").loc["2024-01-04"]
+    b_buy = result.orders[(result.orders["code"] == "b") & (result.orders["side"] == "buy")].iloc[0]
+    assert b_buy["qty"] == 20.0
+    assert day4["cash"] == 0.0
+    assert day4["gross_exposure"] == 1.0
+    assert result.nav["cash"].min() >= 0.0
+
+
 def test_backtest_does_not_duplicate_pending_sell_orders_when_next_bar_is_delayed():
     targets = pd.DataFrame(
         [

@@ -79,16 +79,37 @@ def holding_period_metrics(orders: pd.DataFrame, nav: pd.DataFrame | None = None
     if nav is not None and not nav.empty and "turnover" in nav:
         turnover_daily_avg = float(pd.to_numeric(nav["turnover"], errors="coerce").fillna(0.0).mean())
     sell_blocked_count = 0.0
+    buy_count = 0.0
+    sell_count = 0.0
+    risk_exit_count = 0.0
+    time_exit_count = 0.0
+    avg_entry_abs_rank_pct = 0.0
+    avg_entry_risk_rank_pct = 0.0
     if not orders.empty and "side" in orders:
+        filled = orders[orders.get("status", "filled") == "filled"]
+        buy_count = float(((filled["side"].astype(str).str.lower() == "buy")).sum())
         sell_orders = orders[orders["side"].astype(str).str.lower() == "sell"]
+        filled_sells = sell_orders[sell_orders.get("status", "filled") == "filled"]
+        sell_count = float(len(filled_sells))
         sell_blocked_count = float((sell_orders.get("status", "filled") != "filled").sum())
+        if "exit_reason" in filled_sells:
+            risk_exit_count = float((filled_sells["exit_reason"] == "risk_exit").sum())
+            time_exit_count = float((filled_sells["exit_reason"] == "time_exit").sum())
+        avg_entry_abs_rank_pct = _avg_column(filled, "entry_abs_rank_pct")
+        avg_entry_risk_rank_pct = _avg_column(filled, "entry_risk_rank_pct")
     return {
         "avg_holding_days": float(holding_days.mean()) if not holding_days.empty else 0.0,
         "median_holding_days": float(holding_days.median()) if not holding_days.empty else 0.0,
         "max_holding_days": float(holding_days.max()) if not holding_days.empty else 0.0,
         "holding_segment_count": float(len(holding_days)),
         "turnover_daily_avg": turnover_daily_avg,
+        "buy_count": buy_count,
+        "sell_count": sell_count,
+        "risk_exit_count": risk_exit_count,
+        "time_exit_count": time_exit_count,
         "sell_blocked_count": sell_blocked_count,
+        "avg_entry_abs_rank_pct": avg_entry_abs_rank_pct,
+        "avg_entry_risk_rank_pct": avg_entry_risk_rank_pct,
     }
 
 
@@ -136,6 +157,8 @@ def summarize_fold_metric_rows(
         "win_rate": win_rate,
         "empty_day_ratio": empty_day_ratio,
         "cash_ratio_avg": cash_ratio_avg,
+        "avg_cash_ratio": cash_ratio_avg,
+        "avg_positions": _avg_positions(result.positions),
         "bse_excluded_count": float(bse_excluded_count),
         "unknown_industry_weight_avg": float(unknown["unknown_industry_avg_weight"]),
         "core_pool_size_avg": float(core_pool_size),
@@ -254,3 +277,16 @@ def summarize_unknown_industry_exposure(daily_exposure: pd.DataFrame) -> dict[st
 
 def _dcg(values: list[float]) -> float:
     return sum((2**float(value) - 1.0) / math.log2(idx + 2) for idx, value in enumerate(values))
+
+
+def _avg_column(frame: pd.DataFrame, column: str) -> float:
+    if frame.empty or column not in frame:
+        return 0.0
+    values = pd.to_numeric(frame[column], errors="coerce").dropna()
+    return float(values.mean()) if not values.empty else 0.0
+
+
+def _avg_positions(positions: pd.DataFrame) -> float:
+    if positions.empty or "sim_date" not in positions or "code" not in positions:
+        return 0.0
+    return float(positions.groupby("sim_date")["code"].nunique().mean())

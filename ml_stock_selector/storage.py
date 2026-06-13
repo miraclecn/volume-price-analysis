@@ -61,6 +61,8 @@ def _apply_migrations(con: duckdb.DuckDBPyConnection) -> None:
         "alter table ml_backtest_metrics add column if not exists turnover_daily_avg double",
         "alter table ml_backtest_metrics add column if not exists sell_blocked_count double",
         "alter table ml_backtest_orders add column if not exists entry_date varchar",
+        "alter table ml_backtest_orders add column if not exists entry_price double",
+        "alter table ml_backtest_orders add column if not exists fold_id varchar",
         "alter table ml_backtest_orders add column if not exists exit_date varchar",
         "alter table ml_backtest_orders add column if not exists holding_days integer",
         "alter table ml_backtest_orders add column if not exists entry_trade_score double",
@@ -68,11 +70,17 @@ def _apply_migrations(con: duckdb.DuckDBPyConnection) -> None:
         "alter table ml_backtest_orders add column if not exists entry_reason varchar",
         "alter table ml_backtest_orders add column if not exists exit_reason varchar",
         "alter table ml_backtest_orders add column if not exists sell_blocked_reason varchar",
+        "alter table ml_backtest_orders add column if not exists entry_abs_rank_pct double",
+        "alter table ml_backtest_orders add column if not exists entry_risk_rank_pct double",
+        "alter table ml_backtest_orders add column if not exists strategy_id varchar",
+        "alter table ml_backtest_orders add column if not exists realized_pnl double",
+        "alter table ml_backtest_positions add column if not exists fold_id varchar",
         "alter table ml_backtest_positions add column if not exists entry_date varchar",
         "alter table ml_backtest_positions add column if not exists entry_price double",
         "alter table ml_backtest_positions add column if not exists holding_days integer",
         "alter table ml_backtest_positions add column if not exists entry_trade_score double",
         "alter table ml_backtest_positions add column if not exists entry_reason varchar",
+        "alter table ml_backtest_nav add column if not exists fold_id varchar",
         "alter table ml_portfolio_targets_daily add column if not exists hold_reason varchar",
         "alter table ml_portfolio_targets_daily add column if not exists signal_action varchar",
         "alter table ml_portfolio_targets_daily add column if not exists exit_reason varchar",
@@ -150,7 +158,78 @@ def _apply_migrations(con: duckdb.DuckDBPyConnection) -> None:
         except Exception:
             # Keep startup resilient for historical table variants.
             continue
+    _migrate_backtest_output_tables(con)
     _migrate_backtest_metrics_primary_key(con)
+
+
+def _migrate_backtest_output_tables(con: duckdb.DuckDBPyConnection) -> None:
+    specs = {
+        "ml_backtest_orders": """
+            run_id varchar,
+            fold_id varchar,
+            sim_date varchar,
+            decision_date varchar,
+            code varchar,
+            side varchar,
+            qty double,
+            target_weight double,
+            order_px_ref varchar,
+            fill_px double,
+            status varchar,
+            reason varchar,
+            entry_date varchar,
+            entry_price double,
+            exit_date varchar,
+            holding_days integer,
+            entry_trade_score double,
+            exit_trade_score double,
+            entry_abs_rank_pct double,
+            entry_risk_rank_pct double,
+            entry_reason varchar,
+            exit_reason varchar,
+            sell_blocked_reason varchar,
+            strategy_id varchar,
+            realized_pnl double
+        """,
+        "ml_backtest_positions": """
+            run_id varchar,
+            fold_id varchar,
+            sim_date varchar,
+            code varchar,
+            position_qty double,
+            market_value double,
+            weight double,
+            entry_date varchar,
+            entry_price double,
+            holding_days integer,
+            entry_trade_score double,
+            entry_reason varchar
+        """,
+        "ml_backtest_nav": """
+            run_id varchar,
+            fold_id varchar,
+            sim_date varchar,
+            nav double,
+            cash double,
+            gross_exposure double,
+            turnover double
+        """,
+    }
+    for table_name, columns_sql in specs.items():
+        row = con.execute(
+            "select sql from duckdb_tables() where table_name = ?",
+            [table_name],
+        ).fetchone()
+        if row is None:
+            continue
+        table_sql = str(row[0]).lower().replace(" ", "")
+        if "fold_id" in table_sql and "primarykey(" not in table_sql:
+            continue
+        temp_name = f"_{table_name}_migrate_{uuid4().hex}"
+        con.execute(f"create table {temp_name} ({columns_sql})")
+        con.execute(f"insert into {temp_name} by name select * from {table_name}")
+        con.execute(f"drop table {table_name}")
+        con.execute(f"alter table {temp_name} rename to {table_name}")
 
 
 def _migrate_backtest_metrics_primary_key(con: duckdb.DuckDBPyConnection) -> None:
@@ -239,3 +318,55 @@ def upsert_dataframe(
         con.execute(f"insert into {table_name} by name select * from {temp_name}")
     finally:
         con.unregister(temp_name)
+
+
+def clear_backtest_outputs(
+    con: duckdb.DuckDBPyConnection,
+    run_id: str,
+    fold_id: str,
+    start_date: str,
+    end_date: str,
+) -> None:
+    con.execute(
+        """
+        delete from ml_backtest_orders
+        where run_id = ?
+          and (fold_id = ? or fold_id is null)
+          and decision_date between ? and ?
+        """,
+        [run_id, fold_id, start_date, end_date],
+    )
+    con.execute(
+        """
+        delete from ml_backtest_positions
+        where run_id = ?
+          and (fold_id = ? or fold_id is null)
+          and sim_date between ? and ?
+        """,
+        [run_id, fold_id, start_date, end_date],
+    )
+    con.execute(
+        """
+        delete from ml_backtest_nav
+        where run_id = ?
+          and (fold_id = ? or fold_id is null)
+          and sim_date between ? and ?
+        """,
+        [run_id, fold_id, start_date, end_date],
+    )
+
+
+def clear_portfolio_targets(
+    con: duckdb.DuckDBPyConnection,
+    portfolio_id: str,
+    start_date: str,
+    end_date: str,
+) -> None:
+    con.execute(
+        """
+        delete from ml_portfolio_targets_daily
+        where portfolio_id = ?
+          and trade_date between ? and ?
+        """,
+        [portfolio_id, start_date, end_date],
+    )

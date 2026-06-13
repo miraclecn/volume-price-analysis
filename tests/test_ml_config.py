@@ -37,6 +37,22 @@ def test_default_ml_config_exposes_v2_flags_enabled():
     assert config.portfolio["v2"]["exit"]["sell_score_threshold"] < config.portfolio["v2"]["candidate_min_trade_score"]
 
 
+def test_default_ml_config_exposes_fixed_5d_strategy_profiles():
+    config = load_ml_config("config/ml_default.toml")
+
+    fixed = config.portfolio["fixed_5d_risk_filter"]
+    assert fixed["strategy_id"] == "abs_ranker_fixed_5d_risk_filter_v1"
+    assert fixed["holding_days"] == 5
+    assert fixed["enable_risk_exit"] is True
+    assert fixed["enable_score_exit"] is False
+    assert fixed["enable_not_candidate_exit"] is False
+    assert fixed["enable_trailing_exit"] is False
+    assert fixed["max_new_entries_per_day"] == fixed["hard_max_positions"]
+    no_risk = config.portfolio["fixed_5d_no_risk_exit"]
+    assert no_risk["strategy_id"] == "abs_ranker_fixed_5d_no_risk_exit_v1"
+    assert no_risk["enable_risk_exit"] is False
+
+
 def test_walkforward_config_uses_2015_start_and_named_folds():
     config = load_ml_config("config/ml_walkforward.toml")
     folds = config.split["folds"]

@@ -31,6 +31,8 @@ class PortfolioConstraints:
     core_min_trade_score: float = 0.75
     candidate_min_trade_score: float = 0.65
     exclude_bse: bool = True
+    selection_bucket_count: int = 0
+    selection_per_bucket: int = 0
     holding_policy: HoldingPolicy = HoldingPolicy()
 
     def __post_init__(self) -> None:
@@ -38,6 +40,47 @@ class PortfolioConstraints:
             object.__setattr__(self, "min_candidate_pool_size", self.candidate_min_count)
         if self.holding_policy.sell_score_threshold >= self.candidate_min_trade_score:
             raise ValueError("sell_score_threshold must be below candidate_min_trade_score")
+        if (self.selection_bucket_count < 0) or (self.selection_per_bucket < 0):
+            raise ValueError("selection bucket settings must be non-negative")
+        if (self.selection_bucket_count == 0) != (self.selection_per_bucket == 0):
+            raise ValueError("selection_bucket_count and selection_per_bucket must be set together")
+
+
+@dataclass(frozen=True)
+class FixedHorizonRiskFilterConfig:
+    enabled: bool = True
+    strategy_id: str = "abs_ranker_fixed_5d_risk_filter_v1"
+    holding_days: int = 5
+    target_positions: int = 10
+    hard_max_positions: int = 12
+    max_initial_entries: int = 10
+    max_new_entries_per_day: int = 12
+    min_abs_rank_pct: float = 0.70
+    risk_entry_max_rank_pct: float = 0.55
+    risk_exit_rank_pct: float = 0.85
+    renewal_candidate_rank: int = 30
+    min_adv20_amount: float = 50_000_000
+    exclude_bse: bool = True
+    exclude_st: bool = True
+    exclude_paused: bool = True
+    require_can_buy_next_open: bool = True
+    allow_cash: bool = True
+    position_weight_mode: str = "equal_weight"
+    min_position_weight: float = 0.06
+    max_position_weight: float = 0.12
+    enable_risk_exit: bool = True
+    enable_score_exit: bool = False
+    enable_not_candidate_exit: bool = False
+    enable_trailing_exit: bool = False
+    enable_time_exit: bool = True
+
+    def __post_init__(self) -> None:
+        if self.target_positions > self.hard_max_positions:
+            raise ValueError("target_positions cannot exceed hard_max_positions")
+        if self.min_position_weight > self.max_position_weight:
+            raise ValueError("min_position_weight cannot exceed max_position_weight")
+        if self.position_weight_mode != "equal_weight":
+            raise ValueError("fixed horizon strategy only supports equal_weight")
 
 
 def apply_hard_filters(candidates: pd.DataFrame, constraints: PortfolioConstraints, score_column: str | None = "trade_score") -> pd.DataFrame:

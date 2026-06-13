@@ -84,6 +84,60 @@ sell_if_not_candidate_after_target_days = true
 force_exit_after_max_hold_days = true
 allow_score_exit_before_min_hold = false
 
+[portfolio.fixed_5d_risk_filter]
+enabled = true
+strategy_id = "abs_ranker_fixed_5d_risk_filter_v1"
+holding_days = 5
+target_positions = 10
+hard_max_positions = 12
+max_initial_entries = 10
+max_new_entries_per_day = 12
+min_abs_rank_pct = 0.70
+risk_entry_max_rank_pct = 0.55
+risk_exit_rank_pct = 0.85
+renewal_candidate_rank = 30
+min_adv20_amount = 50000000
+exclude_bse = true
+exclude_st = true
+exclude_paused = true
+require_can_buy_next_open = true
+allow_cash = true
+position_weight_mode = "equal_weight"
+min_position_weight = 0.06
+max_position_weight = 0.12
+enable_risk_exit = true
+enable_score_exit = false
+enable_not_candidate_exit = false
+enable_trailing_exit = false
+enable_time_exit = true
+
+[portfolio.fixed_5d_no_risk_exit]
+enabled = true
+strategy_id = "abs_ranker_fixed_5d_no_risk_exit_v1"
+holding_days = 5
+target_positions = 10
+hard_max_positions = 12
+max_initial_entries = 10
+max_new_entries_per_day = 12
+min_abs_rank_pct = 0.70
+risk_entry_max_rank_pct = 0.55
+risk_exit_rank_pct = 0.85
+renewal_candidate_rank = 30
+min_adv20_amount = 50000000
+exclude_bse = true
+exclude_st = true
+exclude_paused = true
+require_can_buy_next_open = true
+allow_cash = true
+position_weight_mode = "equal_weight"
+min_position_weight = 0.06
+max_position_weight = 0.12
+enable_risk_exit = false
+enable_score_exit = false
+enable_not_candidate_exit = false
+enable_trailing_exit = false
+enable_time_exit = true
+
 [backtest]
 initial_cash = 1000000
 execution_price = "next_open"

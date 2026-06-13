@@ -38,6 +38,7 @@ def main() -> None:
             Path(str(config.data["artifact_dir"])),
             config.ml_v2,
             bool(config.universe.get("exclude_bse", False)),
+            config.portfolio.get("v2", {}).get("min_adv20_amount", config.portfolio.get("min_adv20_amount")),
         )
         for artifact in artifacts:
             register_model(
@@ -66,6 +67,7 @@ def train_model_artifacts(
     artifact_dir: Path,
     ml_v2: dict[str, object],
     exclude_bse: bool = False,
+    min_adv20_amount: object | None = None,
 ):
     artifacts = []
     deny_industry = bool(ml_v2.get("feature_matrix_v2_deny_industry"))
@@ -78,6 +80,8 @@ def train_model_artifacts(
         label_base,
         label_name=absolute_label,
         exclude_bse=exclude_bse,
+        executable_only=True,
+        min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
     )
     artifacts.append(train_alpha_ranker(absolute_samples, feature_set_id, absolute_label, label_base, horizon, artifact_dir, deny_industry=deny_industry))
     if bool(ml_v2.get("active_ranker_enabled")):
@@ -89,6 +93,8 @@ def train_model_artifacts(
             label_base,
             label_name="active_label",
             exclude_bse=exclude_bse,
+            executable_only=True,
+            min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
         )
         artifacts.append(train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, deny_industry=deny_industry))
     if bool(ml_v2.get("risk_model_v2_enabled")):
@@ -100,6 +106,8 @@ def train_model_artifacts(
             label_base,
             label_name="risk_label",
             exclude_bse=exclude_bse,
+            executable_only=True,
+            min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
         )
         artifacts.append(train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, deny_industry=deny_industry))
     return artifacts

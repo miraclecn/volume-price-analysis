@@ -38,6 +38,28 @@ def prediction_report_metrics(predictions: pd.DataFrame) -> dict[str, float]:
     }
 
 
+def fixed_horizon_exit_reason_report(orders: pd.DataFrame) -> pd.DataFrame:
+    if orders.empty:
+        return pd.DataFrame(columns=["exit_reason", "sell_count", "avg_realized_ret", "sum_realized_ret"])
+    sells = orders[
+        (orders.get("side", pd.Series(dtype=object)).astype(str).str.lower() == "sell")
+        & (orders.get("status", "filled") == "filled")
+    ].copy()
+    if sells.empty:
+        return pd.DataFrame(columns=["exit_reason", "sell_count", "avg_realized_ret", "sum_realized_ret"])
+    if "realized_ret" not in sells:
+        sells["realized_ret"] = pd.NA
+    return (
+        sells.groupby("exit_reason", dropna=False)
+        .agg(
+            sell_count=("side", "size"),
+            avg_realized_ret=("realized_ret", "mean"),
+            sum_realized_ret=("realized_ret", "sum"),
+        )
+        .reset_index()
+    )
+
+
 def write_portfolio_diagnostics_report(
     diagnostics: pd.DataFrame,
     report_dir: Path | str,

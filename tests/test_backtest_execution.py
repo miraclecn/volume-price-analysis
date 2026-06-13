@@ -61,3 +61,35 @@ def test_execution_empty_daily_target_sells_current_positions():
     assert orders.iloc[0]["sim_date"] == "2024-01-03"
     assert orders.iloc[0]["side"] == "sell"
     assert orders.iloc[0]["qty"] == 50.0
+
+
+def test_execution_does_not_rebalance_retained_holdings():
+    targets = pd.DataFrame(
+        [
+            {
+                "trade_date": "2024-01-02",
+                "portfolio_id": "p1",
+                "code": "a",
+                "target_weight": 0.10,
+                "signal_action": "hold",
+            }
+        ]
+    )
+    bars = pd.DataFrame(
+        [
+            {"trade_date": "2024-01-02", "code": "a", "open": 10.0, "close": 10.0, "limit_up": 11.0, "limit_down": 9.0, "is_paused": False},
+            {"trade_date": "2024-01-03", "code": "a", "open": 20.0, "close": 20.0, "limit_up": 22.0, "limit_down": 18.0, "is_paused": False},
+        ]
+    )
+    current_positions = pd.DataFrame([{"code": "a", "position_qty": 50.0}])
+
+    orders = simulate_rebalance_orders(
+        targets,
+        bars,
+        current_positions,
+        1000.0,
+        ExecutionConfig(slippage_bps=0),
+        decision_date="2024-01-02",
+    )
+
+    assert orders.empty

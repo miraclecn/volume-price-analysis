@@ -1,0 +1,43 @@
+feature_set_id: vpa_d_sequence
+schema_version: v2_pv_only_001
+
+include_patterns:
+  - "ret_*"
+  - "open_gap_pct"
+  - "range_*"
+  - "body_*"
+  - "upper_shadow_pct"
+  - "lower_shadow_pct"
+  - "close_position"
+  - "amount"
+  - "amount_ratio_*"
+  - "volume_ratio_*"
+  - "turnover_*"
+  - "volatility_*"
+  - "high_distance_*"
+  - "low_distance_*"
+  - "vol_rvol_n_*"
+  - "range_rvol_n_*"
+  - "price_position_n_*"
+  - "ma_slope_n_*"
+  - "bull_bear_score_*"
+  - "bull_score_change_*"
+  - "sequence_strength_score_*"
+  - "support_label_count_*"
+  - "supply_label_count_*"
+  - "supply_score_*"
+  - "demand_score_*"
+  - "abnormal_ratio_*"
+
+exclude_columns:
+  - industry_code
+  - industry_name
+  - industry_unknown
+  - industry_missing
+  - exchange
+  - board
+  - is_bse
+  - is_st
+  - is_paused
+  - can_buy_next_open
+  - can_sell_next_open

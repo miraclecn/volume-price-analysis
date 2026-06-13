@@ -83,14 +83,14 @@ def evaluate_sell_decision(
     latest_row: pd.Series,
     holding_policy: HoldingPolicy,
 ) -> SellDecision:
-    can_sell = bool(latest_row.get("can_sell_next_open", True))
+    can_sell = _optional_bool(latest_row.get("can_sell_next_open"), True)
 
     hard_reasons = []
-    if bool(latest_row.get("is_bse", False)):
+    if _optional_bool(latest_row.get("is_bse"), False):
         hard_reasons.append("is_bse")
-    if bool(latest_row.get("is_st", False)):
+    if _optional_bool(latest_row.get("is_st"), False):
         hard_reasons.append("is_st")
-    if bool(latest_row.get("data_quality_high_severity", False)):
+    if _optional_bool(latest_row.get("data_quality_high_severity"), False):
         hard_reasons.append("data_quality_high_severity")
     if hard_reasons:
         return _sell_decision(holding.code, f"hard_exit:{','.join(hard_reasons)}", can_sell)
@@ -115,7 +115,7 @@ def evaluate_sell_decision(
     ):
         return _sell_decision(holding.code, "score_exit", can_sell)
 
-    in_candidate_pool = bool(latest_row.get("in_candidate_pool", False))
+    in_candidate_pool = _optional_bool(latest_row.get("in_candidate_pool"), False)
     if (
         holding.holding_days >= holding_policy.target_hold_days
         and holding_policy.sell_if_not_candidate_after_target_days
@@ -144,6 +144,12 @@ def _optional_float(value: object) -> float | None:
     if value is None or pd.isna(value):
         return None
     return float(value)
+
+
+def _optional_bool(value: object, default: bool) -> bool:
+    if value is None or pd.isna(value):
+        return default
+    return bool(value)
 
 
 def _optional_str(value: object) -> str | None:

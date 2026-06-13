@@ -247,6 +247,7 @@ create table if not exists ml_portfolio_construction_diagnostics (
 
 create table if not exists ml_backtest_orders (
     run_id varchar,
+    fold_id varchar,
     sim_date varchar not null,
     decision_date varchar not null,
     code varchar not null,
@@ -258,18 +259,23 @@ create table if not exists ml_backtest_orders (
     status varchar not null,
     reason varchar,
     entry_date varchar,
+    entry_price double,
     exit_date varchar,
     holding_days integer,
     entry_trade_score double,
     exit_trade_score double,
+    entry_abs_rank_pct double,
+    entry_risk_rank_pct double,
     entry_reason varchar,
     exit_reason varchar,
     sell_blocked_reason varchar,
-    primary key (sim_date, decision_date, code, side)
+    strategy_id varchar,
+    realized_pnl double
 );
 
 create table if not exists ml_backtest_positions (
     run_id varchar,
+    fold_id varchar,
     sim_date varchar not null,
     code varchar not null,
     position_qty double,
@@ -279,18 +285,17 @@ create table if not exists ml_backtest_positions (
     entry_price double,
     holding_days integer,
     entry_trade_score double,
-    entry_reason varchar,
-    primary key (sim_date, code)
+    entry_reason varchar
 );
 
 create table if not exists ml_backtest_nav (
     run_id varchar,
+    fold_id varchar,
     sim_date varchar not null,
     nav double not null,
     cash double not null,
     gross_exposure double not null,
-    turnover double not null,
-    primary key (sim_date)
+    turnover double not null
 );
 
 create table if not exists ml_backtest_metrics (

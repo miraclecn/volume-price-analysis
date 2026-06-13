@@ -124,9 +124,40 @@ def run_walkforward_experiment(
         if train_fm.empty or test_fm.empty:
             continue
 
-        abs_samples = build_training_samples(train_fm, labels, feature_set_id, horizon, label_base, "absolute_label", exclude_bse=exclude_bse)
-        active_samples = build_training_samples(train_fm, labels, feature_set_id, horizon, label_base, "active_label", exclude_bse=exclude_bse)
-        risk_samples = build_training_samples(train_fm, labels, feature_set_id, horizon, label_base, "risk_label", exclude_bse=exclude_bse)
+        min_adv20_amount = config.portfolio.get("v2", {}).get("min_adv20_amount", config.portfolio.get("min_adv20_amount"))
+        abs_samples = build_training_samples(
+            train_fm,
+            labels,
+            feature_set_id,
+            horizon,
+            label_base,
+            "absolute_label",
+            exclude_bse=exclude_bse,
+            executable_only=True,
+            min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
+        )
+        active_samples = build_training_samples(
+            train_fm,
+            labels,
+            feature_set_id,
+            horizon,
+            label_base,
+            "active_label",
+            exclude_bse=exclude_bse,
+            executable_only=True,
+            min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
+        )
+        risk_samples = build_training_samples(
+            train_fm,
+            labels,
+            feature_set_id,
+            horizon,
+            label_base,
+            "risk_label",
+            exclude_bse=exclude_bse,
+            executable_only=True,
+            min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
+        )
         if abs_samples.empty or active_samples.empty or risk_samples.empty:
             continue
 
@@ -262,6 +293,13 @@ def run_walkforward_feature_store_experiment(
     selected_folds = _select_folds(config.split.get("folds", []), fold_id)
     spec = FeatureStoreSpec(feature_store_dir, feature_store_version, feature_set_id)
     results: list[WalkForwardFoldResult] = []
+    matrix_universe_config = {
+        **dict(config.universe),
+        "min_adv20_amount": config.portfolio.get("v2", {}).get(
+            "min_adv20_amount",
+            config.portfolio.get("min_adv20_amount"),
+        ),
+    }
     for fold in selected_folds:
         current_fold_id = str(fold["fold_id"])
         print(
@@ -289,7 +327,7 @@ def run_walkforward_feature_store_experiment(
                     feature_set_id,
                     horizon_d,
                     label_base,
-                    config.universe,
+                    matrix_universe_config,
                     matrix_cache_dir,
                     batch_size=batch_size,
                 )
