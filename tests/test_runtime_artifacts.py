@@ -5,7 +5,9 @@ import json
 import duckdb
 import pandas as pd
 
+from ml_stock_selector.models.artifacts import ModelArtifact
 from ml_stock_selector.runtime.artifacts import prepare_run_artifact_dir, write_backtest_fold_artifacts
+from ml_stock_selector.runtime.artifacts import write_model_artifact_bundle
 
 
 def test_run_and_backtest_artifacts_capture_config_params_and_outputs(tmp_path):
@@ -47,3 +49,39 @@ def test_run_and_backtest_artifacts_capture_config_params_and_outputs(tmp_path):
     assert params["execution"]["slippage_bps"] == 5.0
     assert metrics[0]["metric_name"] == "annualized_return"
     assert nav == (1001.0,)
+
+
+def test_model_artifact_bundle_uses_phase4_role_layout(tmp_path):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    model_path = source_dir / "alpha_ranker_a.pkl"
+    schema_path = source_dir / "alpha_ranker_a_schema.json"
+    params_path = source_dir / "alpha_ranker_a.params.json"
+    model_path.write_bytes(b"model")
+    schema_path.write_text('{"columns": ["x"]}\n', encoding="utf-8")
+    params_path.write_text('{"num_leaves": 7}\n', encoding="utf-8")
+    artifact = ModelArtifact(
+        model_id="alpha_ranker_a",
+        model_type="alpha_ranker",
+        feature_set_id="vpa_d_sequence",
+        label_name="absolute_label",
+        label_base="from_next_open",
+        horizon_d=5,
+        feature_schema_uri=schema_path,
+        artifact_uri=model_path,
+        artifact_dir=source_dir,
+        metrics={"train_rank_ic": 0.12},
+    )
+
+    bundled = write_model_artifact_bundle(tmp_path / "runs" / "run_a" / "folds" / "wf_2020", "absolute_ranker", artifact)
+
+    role_dir = tmp_path / "runs" / "run_a" / "folds" / "wf_2020" / "models" / "absolute_ranker"
+    metrics = json.loads((role_dir / "train_metrics.json").read_text(encoding="utf-8"))
+    params = json.loads((role_dir / "params.json").read_text(encoding="utf-8"))
+
+    assert bundled.artifact_uri == role_dir / "model.pkl"
+    assert bundled.feature_schema_uri == role_dir / "feature_schema.json"
+    assert bundled.artifact_dir == role_dir
+    assert (role_dir / "model.pkl").read_bytes() == b"model"
+    assert params["num_leaves"] == 7
+    assert metrics["train_rank_ic"] == 0.12

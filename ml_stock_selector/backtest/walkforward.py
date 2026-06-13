@@ -32,6 +32,7 @@ from ml_stock_selector.portfolio.constructor import construct_portfolio_targets_
 from ml_stock_selector.portfolio.holding_policy import HoldingPolicy
 from ml_stock_selector.prediction import build_three_model_prediction_rows, predict_with_model, write_chunked_fold_predictions
 from ml_stock_selector.registry import register_model
+from ml_stock_selector.runtime.artifacts import write_model_artifact_bundle, write_walkforward_fold_artifacts
 from ml_stock_selector.sample_builder import build_training_samples
 from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates_v2
 from ml_stock_selector.universe import apply_universe_filter
@@ -106,8 +107,10 @@ def run_walkforward_experiment(
     labels: pd.DataFrame,
     tradeability: pd.DataFrame,
     artifact_dir: Path | str = "outputs/ml/artifacts",
+    run_id: str | None = None,
+    run_artifact_root: Path | str | None = None,
 ) -> list[WalkForwardFoldResult]:
-    run_id = f"wf_three_model_v2_{uuid4().hex[:8]}"
+    run_id = run_id or f"wf_three_model_v2_{uuid4().hex[:8]}"
     folds = config.split.get("folds", [])
     if not folds:
         return []
@@ -171,9 +174,14 @@ def run_walkforward_experiment(
         if abs_samples.empty or active_samples.empty or risk_samples.empty:
             continue
 
+        fold_artifact_root = _fold_artifact_root(run_artifact_root, fold_id)
         abs_artifact = train_alpha_ranker(abs_samples, feature_set_id, "absolute_label", label_base, horizon, artifact_dir, True, train_config=ranker_config)
         active_artifact = train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, True, train_config=ranker_config)
         risk_artifact = train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, True, train_config=risk_config)
+        if fold_artifact_root is not None:
+            abs_artifact = write_model_artifact_bundle(fold_artifact_root, "absolute_ranker", abs_artifact)
+            active_artifact = write_model_artifact_bundle(fold_artifact_root, "active_ranker", active_artifact)
+            risk_artifact = write_model_artifact_bundle(fold_artifact_root, "risk_model", risk_artifact)
         register_model(
             con,
             model_id=abs_artifact.model_id,
@@ -280,7 +288,20 @@ def run_walkforward_experiment(
             fold_id=fold_id,
             score_version="v2_three_model",
         )
-        results.append(WalkForwardFoldResult(fold_id, [abs_artifact.model_id, active_artifact.model_id, risk_artifact.model_id], predictions, targets, backtest, {"rows": float(len(predictions)), "run_id": run_id}))
+        metrics = {"rows": float(len(predictions)), "run_id": run_id, "score_version": "v2_three_model"}
+        if fold_artifact_root is not None:
+            write_walkforward_fold_artifacts(
+                fold_artifact_root,
+                predictions=predictions,
+                targets=targets,
+                diagnostics=backtest.portfolio_diagnostics,
+                orders=backtest.orders,
+                positions=backtest.positions,
+                nav=backtest.nav,
+                metrics=metrics,
+                models={"absolute": abs_artifact.model_id, "active": active_artifact.model_id, "risk": risk_artifact.model_id},
+            )
+        results.append(WalkForwardFoldResult(fold_id, [abs_artifact.model_id, active_artifact.model_id, risk_artifact.model_id], predictions, targets, backtest, metrics))
     return results
 
 
@@ -299,6 +320,7 @@ def run_walkforward_feature_store_experiment(
     score_version: str,
     fold_id: str | None = None,
     artifact_dir: Path | str = "outputs/ml/artifacts",
+    run_artifact_root: Path | str | None = None,
     batch_size: int = 50000,
     prediction_chunk_size: int = 50000,
     force: bool = False,
@@ -315,6 +337,7 @@ def run_walkforward_feature_store_experiment(
     }
     for fold in selected_folds:
         current_fold_id = str(fold["fold_id"])
+        fold_artifact_root = _fold_artifact_root(run_artifact_root, current_fold_id)
         print(
             "fold_id={fold_id} train={train_start}..{train_end} valid={valid_start}..{valid_end} "
             "test={test_start}..{test_end} feature_store_version={feature_store_version} exclude_bse={exclude_bse}".format(
@@ -356,7 +379,11 @@ def run_walkforward_feature_store_experiment(
                 artifacts = _artifacts_from_manifest(cache, read_fold_manifest(cache.manifest_path))
             else:
                 artifacts = train_three_models_from_fold_cache(cache, config, artifact_dir)
+                if fold_artifact_root is not None:
+                    artifacts = _bundle_three_model_artifacts(fold_artifact_root, artifacts)
                 update_fold_manifest_status(cache.manifest_path, "models_trained", artifacts=_artifact_manifest(artifacts))
+            if fold_artifact_root is not None and not str(artifacts.absolute.artifact_dir).startswith(str(fold_artifact_root)):
+                artifacts = _bundle_three_model_artifacts(fold_artifact_root, artifacts)
             manifest = read_fold_manifest(cache.manifest_path)
             for artifact in [artifacts.absolute, artifacts.active, artifacts.risk]:
                 register_model(
@@ -425,6 +452,19 @@ def run_walkforward_feature_store_experiment(
                 score_version=score_version,
             )
             update_fold_manifest_status(cache.manifest_path, "backtested")
+            metrics = {"rows": float(len(predictions)), "run_id": run_id, "score_version": score_version}
+            if fold_artifact_root is not None:
+                write_walkforward_fold_artifacts(
+                    fold_artifact_root,
+                    predictions=enriched,
+                    targets=targets,
+                    diagnostics=backtest.portfolio_diagnostics,
+                    orders=backtest.orders,
+                    positions=backtest.positions,
+                    nav=backtest.nav,
+                    metrics=metrics,
+                    models={"absolute": artifacts.absolute.model_id, "active": artifacts.active.model_id, "risk": artifacts.risk.model_id},
+                )
             results.append(
                 WalkForwardFoldResult(
                     current_fold_id,
@@ -432,7 +472,7 @@ def run_walkforward_feature_store_experiment(
                     enriched,
                     targets,
                     backtest,
-                    {"rows": float(len(predictions)), "run_id": run_id},
+                    metrics,
                 )
             )
         except Exception as exc:
@@ -440,6 +480,24 @@ def run_walkforward_feature_store_experiment(
             mark_fold_manifest_failed(cache.manifest_path, exc)
             raise
     return results
+
+
+def _fold_artifact_root(run_artifact_root: Path | str | None, fold_id: str) -> Path | None:
+    if run_artifact_root is None:
+        return None
+    root = Path(run_artifact_root) / "folds" / fold_id
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _bundle_three_model_artifacts(fold_root: Path, artifacts):
+    from ml_stock_selector.models.fold_cache_training import ThreeModelFoldArtifacts
+
+    return ThreeModelFoldArtifacts(
+        absolute=write_model_artifact_bundle(fold_root, "absolute_ranker", artifacts.absolute),
+        active=write_model_artifact_bundle(fold_root, "active_ranker", artifacts.active),
+        risk=write_model_artifact_bundle(fold_root, "risk_model", artifacts.risk),
+    )
 
 
 def _select_folds(folds: list[dict[str, object]], fold_id: str | None) -> list[dict[str, object]]:

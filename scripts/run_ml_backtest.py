@@ -25,7 +25,8 @@ from ml_stock_selector.portfolio.constructor import (
     get_portfolio_diagnostics,
 )
 from ml_stock_selector.portfolio.fixed_horizon import fixed_horizon_config_from_dict
-from ml_stock_selector.runtime.artifacts import prepare_run_artifact_dir, write_backtest_fold_artifacts
+from ml_stock_selector.runtime.artifacts import write_backtest_fold_artifacts
+from ml_stock_selector.runtime.run_context import create_run_context, register_run_context, register_run_fold, update_run_status
 from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates, score_candidates_v2
 from ml_stock_selector.storage import clear_backtest_outputs, clear_portfolio_targets, init_ml_db, upsert_dataframe
 
@@ -191,6 +192,19 @@ def main() -> None:
         portfolio_id = identity.portfolio_id
         fold_id = identity.fold_id
         strategy_id = identity.strategy_id
+        context = create_run_context(
+            run_type="backtest",
+            run_id=rid,
+            experiment_name=str(args.score_mode),
+            config_path=args.config,
+            artifact_root=args.run_artifact_dir,
+            alpha_data_db=str(config.data["alpha_data_db"]),
+            ml_db=ml_db,
+            feature_set_id=args.feature_set_id or str(config.features["feature_set_id"]),
+            label_version=f"{args.label_base or str(config.labels['label_base'])}_h{args.horizon_d or int(config.labels['main_horizon'])}",
+            score_version=score_version,
+        )
+        register_run_context(con, context)
         fixed_strategy = strategy_id in {STRATEGY_FIXED_5D_RISK_FILTER, STRATEGY_FIXED_5D_NO_RISK_EXIT}
         strategy_params = {}
         if fixed_strategy:
@@ -299,6 +313,16 @@ def main() -> None:
         )
         start_date = str(scored["trade_date"].min())
         end_date = str(scored["trade_date"].max())
+        register_run_fold(
+            con,
+            context,
+            {
+                "fold_id": fold_id,
+                "test_start": start_date,
+                "test_end": end_date,
+            },
+            status="success",
+        )
         clear_backtest_outputs(con, rid, fold_id, strategy_id, score_version, start_date, end_date)
         clear_portfolio_targets(con, rid, fold_id, portfolio_id, score_version, start_date, end_date)
         if not targets.empty:
@@ -315,26 +339,8 @@ def main() -> None:
                 str(config.data["report_dir"]),
                 prefix=f"{portfolio_id}_portfolio_diagnostics",
             )
-        run_root = prepare_run_artifact_dir(
-            args.run_artifact_dir,
-            rid,
-            config_path=args.config,
-            run_manifest={
-                "run_type": "backtest",
-                "fold_id": fold_id,
-                "strategy_id": strategy_id,
-                "portfolio_id": portfolio_id,
-                "score_version": score_version,
-                "score_mode": args.score_mode,
-                "ml_db": ml_db,
-                "alpha_data_db": str(config.data["alpha_data_db"]),
-                "feature_set_id": args.feature_set_id or str(config.features["feature_set_id"]),
-                "horizon_d": args.horizon_d or int(config.labels["main_horizon"]),
-                "label_base": args.label_base or str(config.labels["label_base"]),
-            },
-        )
         write_backtest_fold_artifacts(
-            run_root,
+            context.artifact_root,
             fold_id=fold_id,
             strategy_id=strategy_id,
             score_version=score_version,
@@ -354,6 +360,7 @@ def main() -> None:
             nav=result.nav,
             metrics=metrics,
         )
+        update_run_status(con, context, "success")
     finally:
         con.close()
     print(f"nav_rows={len(result.nav)}")

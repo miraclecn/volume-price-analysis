@@ -128,6 +128,46 @@ create table if not exists ml_model_registry (
     primary key (model_id)
 );
 
+create table if not exists ml_runs (
+    run_id varchar primary key,
+    run_type varchar not null,
+    experiment_name varchar,
+    config_path varchar,
+    config_hash varchar,
+    git_commit varchar,
+    alpha_data_db varchar,
+    alpha_data_latest_date varchar,
+    vpa_db varchar,
+    ml_db varchar,
+    feature_set_id varchar,
+    feature_store_version varchar,
+    label_version varchar,
+    score_version varchar,
+    artifact_root varchar,
+    created_at varchar,
+    started_at varchar,
+    finished_at varchar,
+    status varchar,
+    notes varchar
+);
+
+create table if not exists ml_run_folds (
+    run_id varchar not null,
+    fold_id varchar not null,
+    train_start varchar,
+    train_end varchar,
+    valid_start varchar,
+    valid_end varchar,
+    test_start varchar,
+    test_end varchar,
+    gap_type varchar,
+    embargo_days integer,
+    status varchar,
+    artifact_dir varchar,
+    created_at varchar,
+    primary key (run_id, fold_id)
+);
+
 create table if not exists ml_predictions_daily (
     trade_date varchar not null,
     code varchar not null,

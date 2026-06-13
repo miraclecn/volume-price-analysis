@@ -100,6 +100,34 @@ def test_walkforward_runs_synthetic_fold(tmp_path):
     assert not results[0].backtest_result.nav.empty
 
 
+def test_walkforward_writes_phase4_run_fold_artifacts(tmp_path):
+    bars, tradeability, feature_mart, labels, config = _synthetic_walkforward_inputs(tmp_path)
+    con = _walkforward_registry_con()
+    run_root = tmp_path / "runs" / "run_artifacts"
+
+    results = run_walkforward_experiment(
+        config,
+        con,
+        bars,
+        feature_mart,
+        labels,
+        tradeability,
+        artifact_dir=tmp_path / "flat_artifacts",
+        run_id="run_artifacts",
+        run_artifact_root=run_root,
+    )
+    con.close()
+
+    fold_root = run_root / "folds" / "wf_test"
+    assert results
+    assert (fold_root / "models" / "absolute_ranker" / "model.pkl").exists()
+    assert (fold_root / "models" / "active_ranker" / "params.json").exists()
+    assert (fold_root / "models" / "risk_model" / "train_metrics.json").exists()
+    assert (fold_root / "predictions" / "scored_predictions.parquet").exists()
+    assert (fold_root / "portfolio" / "targets.parquet").exists()
+    assert (fold_root / "backtest" / "nav.parquet").exists()
+
+
 def test_walkforward_backfills_from_candidate_pool_when_core_threshold_excludes_core(tmp_path):
     bars, tradeability, feature_mart, labels, config = _synthetic_walkforward_inputs(tmp_path)
     config.ml_v2["core_absolute_min_rank_pct"] = 1.01

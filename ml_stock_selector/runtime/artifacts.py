@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict, is_dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -11,6 +11,8 @@ from typing import Any
 
 import duckdb
 import pandas as pd
+
+from ml_stock_selector.models.artifacts import ModelArtifact
 
 
 def prepare_run_artifact_dir(
@@ -27,10 +29,13 @@ def prepare_run_artifact_dir(
         if source.exists():
             shutil.copy2(source, root / "config_snapshot.toml")
             (root / "config_hash.txt").write_text(_file_sha256(source) + "\n", encoding="utf-8")
+    git_commit = _git_commit()
+    if git_commit:
+        (root / "git_commit.txt").write_text(git_commit + "\n", encoding="utf-8")
     manifest = {
         "run_id": run_id,
         "created_at": _now(),
-        "git_commit": _git_commit(),
+        "git_commit": git_commit,
         **(run_manifest or {}),
     }
     _write_json(root / "run_manifest.json", manifest)
@@ -75,6 +80,73 @@ def write_backtest_fold_artifacts(
     _write_parquet(nav, backtest_root / "nav.parquet")
     _write_json(backtest_root / "metrics.json", _records(metrics))
     return backtest_root
+
+
+def write_walkforward_fold_artifacts(
+    fold_root: Path | str,
+    *,
+    predictions: pd.DataFrame,
+    targets: pd.DataFrame,
+    diagnostics: pd.DataFrame,
+    orders: pd.DataFrame,
+    positions: pd.DataFrame,
+    nav: pd.DataFrame,
+    metrics: dict[str, Any] | pd.DataFrame,
+    models: dict[str, str] | None = None,
+    status: dict[str, bool] | None = None,
+) -> Path:
+    fold_root = Path(fold_root)
+    prediction_root = fold_root / "predictions"
+    portfolio_root = fold_root / "portfolio"
+    backtest_root = fold_root / "backtest"
+    prediction_root.mkdir(parents=True, exist_ok=True)
+    portfolio_root.mkdir(parents=True, exist_ok=True)
+    backtest_root.mkdir(parents=True, exist_ok=True)
+    _write_parquet(predictions, prediction_root / "scored_predictions.parquet")
+    _write_parquet(predictions, prediction_root / "raw_predictions.parquet")
+    _write_parquet(targets, portfolio_root / "targets.parquet")
+    _write_parquet(diagnostics, portfolio_root / "diagnostics.parquet")
+    _write_parquet(orders, backtest_root / "orders.parquet")
+    _write_parquet(positions, backtest_root / "positions.parquet")
+    _write_parquet(nav, backtest_root / "nav.parquet")
+    _write_json(backtest_root / "metrics.json", _jsonable(metrics if isinstance(metrics, dict) else _records(metrics)))
+    manifest_path = fold_root / "fold_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    manifest.update(
+        {
+            "updated_at": _now(),
+            "models": models or manifest.get("models", {}),
+            "status": status
+            or {
+                "matrix_built": True,
+                "models_trained": True,
+                "predicted": True,
+                "backtested": True,
+            },
+        }
+    )
+    _write_json(manifest_path, manifest)
+    return fold_root
+
+
+def write_model_artifact_bundle(fold_root: Path | str, role: str, artifact: ModelArtifact) -> ModelArtifact:
+    role_dir = Path(fold_root) / "models" / role
+    role_dir.mkdir(parents=True, exist_ok=True)
+    model_path = role_dir / "model.pkl"
+    schema_path = role_dir / "feature_schema.json"
+    params_path = role_dir / "params.json"
+    metrics_path = role_dir / "train_metrics.json"
+    shutil.copy2(artifact.artifact_uri, model_path)
+    shutil.copy2(artifact.feature_schema_uri, schema_path)
+    source_params = artifact.artifact_uri.with_suffix(".params.json")
+    if not source_params.exists():
+        source_params = artifact.artifact_dir / f"{artifact.model_id}.params.json"
+    if source_params.exists():
+        shutil.copy2(source_params, params_path)
+    else:
+        _write_json(params_path, {})
+    _write_json(metrics_path, _jsonable(artifact.metrics))
+    return replace(artifact, feature_schema_uri=schema_path, artifact_uri=model_path, artifact_dir=role_dir)
 
 
 def _write_parquet(frame: pd.DataFrame, path: Path) -> None:

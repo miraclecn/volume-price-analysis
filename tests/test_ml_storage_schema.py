@@ -33,7 +33,68 @@ def test_init_ml_db_creates_required_ml_tables(tmp_path):
         "ml_backtest_positions",
         "ml_backtest_nav",
         "ml_backtest_metrics",
+        "ml_runs",
+        "ml_run_folds",
     }.issubset(tables)
+
+
+def test_run_tables_store_run_and_fold_metadata(tmp_path):
+    con = init_ml_db(tmp_path / "ml.duckdb")
+    run = pd.DataFrame(
+        [
+            {
+                "run_id": "run_a",
+                "run_type": "walkforward",
+                "experiment_name": "expanding_gap",
+                "config_path": "config/ml_walkforward.toml",
+                "config_hash": "hash-a",
+                "git_commit": "abc123",
+                "alpha_data_db": "/data/research_source.duckdb",
+                "ml_db": str(tmp_path / "ml.duckdb"),
+                "feature_set_id": "vpa_d_sequence",
+                "feature_store_version": "v2",
+                "label_version": "from_next_open_h5",
+                "score_version": "v2_three_model",
+                "artifact_root": str(tmp_path / "runs" / "run_a"),
+                "created_at": "t",
+                "status": "created",
+            }
+        ]
+    )
+    fold = pd.DataFrame(
+        [
+            {
+                "run_id": "run_a",
+                "fold_id": "wf_2020",
+                "train_start": "2015-01-01",
+                "train_end": "2019-12-31",
+                "valid_start": "2020-01-01",
+                "valid_end": "2020-06-30",
+                "test_start": "2020-07-01",
+                "test_end": "2020-12-31",
+                "gap_type": "one_year_gap",
+                "embargo_days": 0,
+                "status": "created",
+                "artifact_dir": str(tmp_path / "runs" / "run_a" / "folds" / "wf_2020"),
+                "created_at": "t",
+            }
+        ]
+    )
+
+    upsert_dataframe(con, "ml_runs", run, ["run_id"])
+    upsert_dataframe(con, "ml_run_folds", fold, ["run_id", "fold_id"])
+
+    row = con.execute(
+        """
+        select r.config_hash, f.test_start, f.artifact_dir
+        from ml_runs r
+        join ml_run_folds f using (run_id)
+        where r.run_id = 'run_a' and f.fold_id = 'wf_2020'
+        """
+    ).fetchone()
+    con.close()
+
+    assert row == ("hash-a", "2020-07-01", str(tmp_path / "runs" / "run_a" / "folds" / "wf_2020"))
 
 
 def test_ml_schema_exposes_nullable_v2_label_and_prediction_columns(tmp_path):

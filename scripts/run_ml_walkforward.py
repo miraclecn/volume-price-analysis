@@ -11,6 +11,7 @@ from ml_stock_selector.backtest.metrics import annualized_return, max_drawdown
 from ml_stock_selector.config import load_ml_config
 from ml_stock_selector.data_access import load_normalized_stock_bars
 from ml_stock_selector.portfolio.constructor import get_portfolio_diagnostics
+from ml_stock_selector.runtime.run_context import create_run_context, register_run_context, register_run_fold, update_run_status
 from ml_stock_selector.storage import init_ml_db, upsert_dataframe
 
 
@@ -28,6 +29,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--horizon-d", type=int)
     parser.add_argument("--label-base")
     parser.add_argument("--score-version", default="v2_three_model")
+    parser.add_argument("--run-artifact-dir", default="outputs/ml/runs")
     parser.add_argument("--batch-size", type=int, default=50000)
     parser.add_argument("--prediction-chunk-size", type=int, default=50000)
     parser.add_argument("--force", action="store_true")
@@ -52,6 +54,22 @@ def main() -> None:
             selected = [fold for fold in config.split.get("folds", []) if args.fold_id is None or str(fold.get("fold_id")) == args.fold_id]
             if not selected:
                 raise ValueError(f"Unknown fold_id: {args.fold_id}")
+            context = create_run_context(
+                run_type="walkforward",
+                run_id=run_id,
+                experiment_name="feature_store_walkforward",
+                config_path=args.config,
+                artifact_root=args.run_artifact_dir,
+                alpha_data_db=str(config.data["alpha_data_db"]),
+                ml_db=ml_db,
+                feature_set_id=feature_set_id,
+                feature_store_version=args.feature_store_version,
+                label_version=f"{label_base}_h{horizon_d}",
+                score_version=args.score_version,
+            )
+            register_run_context(con, context)
+            for fold in selected:
+                register_run_fold(con, context, fold, status="running")
             bars = load_normalized_stock_bars(
                 str(config.data["alpha_data_db"]),
                 min(str(fold["test_start"]) for fold in selected),
@@ -72,6 +90,7 @@ def main() -> None:
                 score_version=args.score_version,
                 fold_id=args.fold_id,
                 artifact_dir=str(config.data["artifact_dir"]),
+                run_artifact_root=context.artifact_root,
                 batch_size=args.batch_size,
                 prediction_chunk_size=args.prediction_chunk_size,
                 force=args.force,
@@ -80,12 +99,44 @@ def main() -> None:
             if not args.allow_legacy_json_path:
                 raise ValueError("production-scale walk-forward must use Parquet Feature Store; pass --allow-legacy-json-path for small legacy JSON runs")
             print("features_json training path is legacy and not recommended for production-scale walk-forward")
+            run_id = args.run_id or "legacy_walkforward"
+            feature_set_id = args.feature_set_id or str(config.features["feature_set_id"])
+            horizon_d = args.horizon_d or int(config.labels["main_horizon"])
+            label_base = args.label_base or str(config.labels["label_base"])
+            selected = [fold for fold in config.split.get("folds", []) if args.fold_id is None or str(fold.get("fold_id")) == args.fold_id]
+            context = create_run_context(
+                run_type="walkforward",
+                run_id=run_id,
+                experiment_name="legacy_json_walkforward",
+                config_path=args.config,
+                artifact_root=args.run_artifact_dir,
+                alpha_data_db=str(config.data["alpha_data_db"]),
+                ml_db=ml_db,
+                feature_set_id=feature_set_id,
+                label_version=f"{label_base}_h{horizon_d}",
+                score_version=args.score_version,
+            )
+            register_run_context(con, context)
+            for fold in selected:
+                register_run_fold(con, context, fold, status="running")
             feature_mart = con.execute("select * from ml_feature_mart_daily").fetchdf()
             labels = con.execute("select * from ml_labels_daily").fetchdf()
             tradeability = con.execute("select * from ml_tradeability_daily").fetchdf()
             bars = load_normalized_stock_bars(str(config.data["alpha_data_db"]), feature_mart["trade_date"].min(), "2999-12-31", str(config.data["normalized_bars_table"]))
-            results = run_walkforward_experiment(config, con, bars, feature_mart, labels, tradeability, str(config.data["artifact_dir"]))
+            results = run_walkforward_experiment(
+                config,
+                con,
+                bars,
+                feature_mart,
+                labels,
+                tradeability,
+                str(config.data["artifact_dir"]),
+                run_id=run_id,
+                run_artifact_root=context.artifact_root,
+            )
         for item in results:
+            result_fold = next((fold for fold in config.split.get("folds", []) if str(fold.get("fold_id")) == item.fold_id), {"fold_id": item.fold_id})
+            register_run_fold(con, context, result_fold, status="success")
             if not args.use_feature_store:
                 upsert_dataframe(con, "ml_predictions_daily", item.predictions, ["trade_date", "code", "model_id", "horizon_d"])
             target_score_version = str(item.metrics.get("score_version") or args.score_version)
@@ -105,6 +156,7 @@ def main() -> None:
                 {"run_id": item.metrics.get("run_id"), "fold_id": item.fold_id, "score_version": "v2_three_model", "metric_name": "max_drawdown", "metric_value": max_drawdown(item.backtest_result.nav), "segment": "fold"},
             ]
             upsert_dataframe(con, "ml_backtest_metrics", pd.DataFrame(metrics), ["run_id", "fold_id", "score_version", "metric_name", "segment"])
+        update_run_status(con, context, "success")
     finally:
         con.close()
     print(f"folds={len(results)}")
