@@ -10,11 +10,13 @@ from ml_stock_selector.backtest.execution import ExecutionConfig
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints
 from ml_stock_selector.portfolio.holding_policy import HoldingPolicy
 from ml_stock_selector.serving.live_sim import (
+    SCORE_VERSION,
     LiveSimConfig,
     archived_adv_score,
     generate_markdown_report,
     init_live_sim_db,
     run_live_sim_day,
+    live_sim_reproducibility_snapshot,
 )
 
 
@@ -65,6 +67,25 @@ def test_live_sim_default_constraints_match_archived_preferred_replay() -> None:
     assert holding_policy.sell_if_not_candidate_after_target_days is True
     assert holding_policy.force_exit_after_max_hold_days is True
     assert holding_policy.allow_score_exit_before_min_hold is False
+
+
+def test_live_sim_reproducibility_snapshot_records_active_model_and_backtest_parameters() -> None:
+    snapshot = live_sim_reproducibility_snapshot(LiveSimConfig())
+
+    assert snapshot["score_version"] == SCORE_VERSION
+    assert snapshot["portfolio_id"] == "preferred_adv10m_fulladv015_top12"
+    assert snapshot["initial_cash"] == 300_000.0
+    assert snapshot["execution"] == {
+        "slippage_bps": 5.0,
+        "commission_bps": 3.0,
+        "stamp_duty_bps": 5.0,
+        "allow_fractional_shares": False,
+        "a_share_lot_size": 100,
+        "execution_price": "next_open",
+    }
+    assert snapshot["constraints"]["target_positions"] == 12
+    assert snapshot["constraints"]["min_adv20_amount"] == 10_000_000.0
+    assert snapshot["constraints"]["holding_policy"]["target_hold_days"] == 5
 
 
 def test_run_live_sim_day_initializes_cash_plans_next_day_and_settles_without_duplicates(tmp_path: Path) -> None:

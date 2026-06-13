@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 import sys
 import pandas as pd
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ml_stock_selector.backtest.engine import BacktestConfig, run_backtest, run_fixed_horizon_backtest, run_holding_aware_backtest
@@ -35,6 +35,17 @@ SCORE_VERSION_ABSOLUTE_RISK_FILTER = "v2_absolute_risk_filter"
 SCORE_VERSION_ABSOLUTE_RISK_SORT = "v2_absolute_risk_sort"
 STRATEGY_FIXED_5D_RISK_FILTER = "abs_ranker_fixed_5d_risk_filter_v1"
 STRATEGY_FIXED_5D_NO_RISK_EXIT = "abs_ranker_fixed_5d_no_risk_exit_v1"
+STRATEGY_HOLDING_AWARE_V2 = "holding_aware_v2"
+STRATEGY_LEGACY_V1 = "legacy_target_rebalance_v1"
+
+
+@dataclass(frozen=True)
+class BacktestIdentity:
+    run_id: str
+    fold_id: str
+    strategy_id: str
+    score_version: str
+    portfolio_id: str
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -72,8 +83,15 @@ def _score_version_for_mode(score_mode: str) -> str:
     return SCORE_VERSION_THREE_MODEL
 
 
-def _portfolio_id_for_mode(fold_id: str | None, score_mode: str, suffix: str | None = None) -> str:
+def _portfolio_id_for_mode(
+    fold_id: str | None,
+    score_mode: str,
+    suffix: str | None = None,
+    strategy_id: str | None = None,
+) -> str:
     base = fold_id or "default"
+    if strategy_id:
+        base = f"{base}_{strategy_id}"
     if score_mode == "absolute_only":
         base = f"{base}_absolute_only"
     elif score_mode == "absolute_risk_filter":
@@ -83,6 +101,22 @@ def _portfolio_id_for_mode(fold_id: str | None, score_mode: str, suffix: str | N
     if suffix:
         base = f"{base}_{suffix}"
     return base
+
+
+def _backtest_identity(args) -> BacktestIdentity:
+    run_id = args.run_id or "default_run"
+    fold_id = args.fold_id or "default"
+    explicit_strategy = args.strategy_id
+    fixed_strategy = explicit_strategy in {STRATEGY_FIXED_5D_RISK_FILTER, STRATEGY_FIXED_5D_NO_RISK_EXIT}
+    strategy_id = explicit_strategy or STRATEGY_HOLDING_AWARE_V2
+    score_version = args.score_version or (strategy_id if fixed_strategy else _score_version_for_mode(args.score_mode))
+    portfolio_id = _portfolio_id_for_mode(
+        fold_id,
+        "three_model" if fixed_strategy else args.score_mode,
+        args.portfolio_suffix,
+        strategy_id=strategy_id,
+    )
+    return BacktestIdentity(run_id, fold_id, strategy_id, score_version, portfolio_id)
 
 
 def _apply_score_mode(scored: pd.DataFrame, score_mode: str) -> pd.DataFrame:
@@ -149,14 +183,17 @@ def main() -> None:
         )
         if preds.empty:
             raise ValueError("No predictions matched the requested run/fold")
-        rid = args.run_id or "default_run"
-        score_version = args.score_version or _score_version_for_mode(args.score_mode)
-        portfolio_id = _portfolio_id_for_mode(args.fold_id, args.score_mode, args.portfolio_suffix)
-        strategy_id = args.strategy_id
+        identity = _backtest_identity(args)
+        rid = identity.run_id
+        score_version = identity.score_version
+        portfolio_id = identity.portfolio_id
+        fold_id = identity.fold_id
+        strategy_id = identity.strategy_id
         fixed_strategy = strategy_id in {STRATEGY_FIXED_5D_RISK_FILTER, STRATEGY_FIXED_5D_NO_RISK_EXIT}
         if fixed_strategy:
             profile_name = "fixed_5d_no_risk_exit" if strategy_id == STRATEGY_FIXED_5D_NO_RISK_EXIT else "fixed_5d_risk_filter"
-            fixed_constraints = fixed_horizon_config_from_dict(config.portfolio.get(profile_name, {}))
+            loaded_constraints = fixed_horizon_config_from_dict(config.portfolio.get(profile_name, {}))
+            fixed_constraints = replace(loaded_constraints, strategy_id=strategy_id)
             scored = preds.copy()
             if "absolute_rank_pct" not in scored and "alpha_rank_pct" in scored:
                 scored["absolute_rank_pct"] = scored["alpha_rank_pct"]
@@ -172,11 +209,10 @@ def main() -> None:
                     decision_dates=sorted(scored["trade_date"].dropna().unique()),
                 ),
                 run_id=rid,
-                fold_id=fixed_constraints.strategy_id,
+                fold_id=fold_id,
             )
             targets = pd.DataFrame()
             diagnostics = result.portfolio_diagnostics if result.portfolio_diagnostics is not None else pd.DataFrame()
-            portfolio_id = fixed_constraints.strategy_id
         else:
             constraints = _apply_constraint_overrides(_portfolio_constraints_from_config(config), args)
             if bool(config.ml_v2["trade_score_v2_enabled"]):
@@ -189,7 +225,7 @@ def main() -> None:
                     constraints,
                     portfolio_id,
                     run_id=rid,
-                    fold_id=portfolio_id,
+                    fold_id=fold_id,
                     score_version=score_version,
                 )
                 diagnostics = get_portfolio_diagnostics(unweighted_targets)
@@ -213,7 +249,7 @@ def main() -> None:
                     constraints,
                     BacktestConfig(
                         float(config.backtest["initial_cash"]),
-                        args.fold_id or "default",
+                        fold_id,
                         ExecutionConfig(),
                         decision_dates=sorted(scored["trade_date"].dropna().unique()),
                     ),
@@ -221,7 +257,7 @@ def main() -> None:
                     max_weight=float(config.portfolio["single_name_max_weight"]),
                     allow_cash=bool(config.portfolio["allow_cash"]),
                     run_id=rid,
-                    fold_id=portfolio_id,
+                    fold_id=fold_id,
                     score_version=score_version,
                 )
             else:
@@ -230,24 +266,26 @@ def main() -> None:
                     bars,
                     BacktestConfig(
                         float(config.backtest["initial_cash"]),
-                        args.fold_id or "default",
+                        fold_id,
                         ExecutionConfig(),
                         decision_dates=sorted(scored["trade_date"].dropna().unique()),
                     ),
                 )
-        result.nav["run_id"] = rid
-        result.nav["fold_id"] = portfolio_id
-        result.orders["run_id"] = rid
-        result.orders["fold_id"] = portfolio_id
-        result.positions["run_id"] = rid
-        result.positions["fold_id"] = portfolio_id
+        targets = _annotate_targets(targets, rid, fold_id, portfolio_id, score_version)
+        diagnostics = _annotate_diagnostics(diagnostics, rid, fold_id, portfolio_id, score_version)
+        for frame in [result.nav, result.orders, result.positions]:
+            if not frame.empty:
+                frame["run_id"] = rid
+                frame["fold_id"] = fold_id
+                frame["strategy_id"] = strategy_id
+                frame["score_version"] = score_version
         diagnostic_report_metrics = portfolio_diagnostics_report_metrics(diagnostics)
         metrics = summarize_fold_metric_rows(
             result,
             run_id=rid,
-            fold_id=portfolio_id,
+            fold_id=fold_id,
             score_version=score_version,
-            strategy_id=portfolio_id,
+            strategy_id=strategy_id,
             start_date=str(scored["trade_date"].min()),
             end_date=str(scored["trade_date"].max()),
             candidate_pool_size=diagnostic_report_metrics["avg_candidate_pool_size"],
@@ -256,15 +294,15 @@ def main() -> None:
         )
         start_date = str(scored["trade_date"].min())
         end_date = str(scored["trade_date"].max())
-        clear_backtest_outputs(con, rid, portfolio_id, start_date, end_date)
-        clear_portfolio_targets(con, portfolio_id, start_date, end_date)
+        clear_backtest_outputs(con, rid, fold_id, strategy_id, score_version, start_date, end_date)
+        clear_portfolio_targets(con, rid, fold_id, portfolio_id, score_version, start_date, end_date)
         if not targets.empty:
-            upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "portfolio_id", "code"])
+            upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version", "code"])
         if not diagnostics.empty and {"run_id", "fold_id", "portfolio_id", "score_version"}.issubset(diagnostics.columns):
             upsert_dataframe(con, "ml_portfolio_construction_diagnostics", diagnostics, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version"])
-        upsert_dataframe(con, "ml_backtest_orders", result.orders, ["run_id", "fold_id", "sim_date", "decision_date", "code", "side"])
-        upsert_dataframe(con, "ml_backtest_positions", result.positions, ["run_id", "fold_id", "sim_date", "code"])
-        upsert_dataframe(con, "ml_backtest_nav", result.nav, ["run_id", "fold_id", "sim_date"])
+        upsert_dataframe(con, "ml_backtest_orders", result.orders, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "decision_date", "code", "side"])
+        upsert_dataframe(con, "ml_backtest_positions", result.positions, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "code"])
+        upsert_dataframe(con, "ml_backtest_nav", result.nav, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date"])
         upsert_dataframe(con, "ml_backtest_metrics", metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
         if not diagnostics.empty:
             write_portfolio_diagnostics_report(
@@ -275,6 +313,40 @@ def main() -> None:
     finally:
         con.close()
     print(f"nav_rows={len(result.nav)}")
+
+
+def _annotate_targets(
+    targets: pd.DataFrame,
+    run_id: str,
+    fold_id: str,
+    portfolio_id: str,
+    score_version: str,
+) -> pd.DataFrame:
+    if targets.empty:
+        return targets
+    out = targets.copy()
+    out["run_id"] = run_id
+    out["fold_id"] = fold_id
+    out["portfolio_id"] = portfolio_id
+    out["score_version"] = score_version
+    return out
+
+
+def _annotate_diagnostics(
+    diagnostics: pd.DataFrame,
+    run_id: str,
+    fold_id: str,
+    portfolio_id: str,
+    score_version: str,
+) -> pd.DataFrame:
+    if diagnostics.empty:
+        return diagnostics
+    out = diagnostics.copy()
+    out["run_id"] = run_id
+    out["fold_id"] = fold_id
+    out["portfolio_id"] = portfolio_id
+    out["score_version"] = score_version
+    return out
 
 
 if __name__ == "__main__":

@@ -35,10 +35,18 @@ def test_train_three_models_from_fold_cache_creates_three_inactive_ready_artifac
         encoding="utf-8",
     )
 
-    artifacts = train_three_models_from_fold_cache(cache, SimpleNamespace(model={}), tmp_path / "artifacts")
+    artifacts = train_three_models_from_fold_cache(
+        cache,
+        SimpleNamespace(model={"lightgbm_runtime": {"n_estimators": 7, "num_leaves": 11}}),
+        tmp_path / "artifacts",
+    )
 
     assert len(artifacts.model_ids) == 3
     assert artifacts.absolute.artifact_uri.exists()
     assert artifacts.active.artifact_uri.exists()
     assert artifacts.risk.artifact_uri.exists()
     assert artifacts.absolute.feature_schema_uri == cache.feature_schema_path
+    params_path = artifacts.absolute.artifact_dir / f"{artifacts.absolute.model_id}.params.json"
+    params = json.loads(params_path.read_text(encoding="utf-8"))
+    assert params["n_estimators"] == 7
+    assert params["num_leaves"] == 11

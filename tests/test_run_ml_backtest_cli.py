@@ -7,6 +7,8 @@ from scripts.run_ml_backtest import (
     SCORE_VERSION_ABSOLUTE_RISK_FILTER,
     SCORE_VERSION_ABSOLUTE_ONLY,
     SCORE_VERSION_THREE_MODEL,
+    STRATEGY_FIXED_5D_RISK_FILTER,
+    _backtest_identity,
     _apply_score_mode,
     _apply_constraint_overrides,
     _portfolio_id_for_mode,
@@ -173,3 +175,46 @@ def test_absolute_risk_sort_constraint_defaults_use_absolute_gate_not_risk_gate(
     assert adjusted.core_absolute_min_rank_pct == 0.75
     assert adjusted.candidate_risk_max_rank_pct == 1.0
     assert adjusted.core_risk_max_rank_pct == 1.0
+
+
+def test_backtest_identity_keeps_fold_strategy_portfolio_and_score_separate():
+    args = build_arg_parser().parse_args(
+        [
+            "--run-id",
+            "run_202606",
+            "--fold-id",
+            "wf_2025",
+            "--score-mode",
+            "absolute_risk_filter",
+            "--strategy-id",
+            "holding_aware_v2",
+        ]
+    )
+
+    identity = _backtest_identity(args)
+
+    assert identity.run_id == "run_202606"
+    assert identity.fold_id == "wf_2025"
+    assert identity.strategy_id == "holding_aware_v2"
+    assert identity.score_version == SCORE_VERSION_ABSOLUTE_RISK_FILTER
+    assert identity.portfolio_id == "wf_2025_holding_aware_v2_absolute_risk_filter"
+
+
+def test_fixed_horizon_identity_uses_original_fold_and_strategy_score_version():
+    args = build_arg_parser().parse_args(
+        [
+            "--run-id",
+            "run_202606",
+            "--fold-id",
+            "wf_2025",
+            "--strategy-id",
+            STRATEGY_FIXED_5D_RISK_FILTER,
+        ]
+    )
+
+    identity = _backtest_identity(args)
+
+    assert identity.fold_id == "wf_2025"
+    assert identity.strategy_id == STRATEGY_FIXED_5D_RISK_FILTER
+    assert identity.score_version == STRATEGY_FIXED_5D_RISK_FILTER
+    assert identity.portfolio_id == f"wf_2025_{STRATEGY_FIXED_5D_RISK_FILTER}"

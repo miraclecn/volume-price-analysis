@@ -184,8 +184,11 @@ create table if not exists ml_prediction_raw_daily (
 );
 
 create table if not exists ml_portfolio_targets_daily (
+    run_id varchar,
+    fold_id varchar,
     trade_date varchar not null,
     portfolio_id varchar not null,
+    score_version varchar,
     code varchar not null,
     target_weight double,
     rank_n integer,
@@ -202,7 +205,7 @@ create table if not exists ml_portfolio_targets_daily (
     entry_trade_score double,
     latest_trade_score double,
     generated_at varchar,
-    primary key (trade_date, portfolio_id, code)
+    primary key (trade_date, run_id, fold_id, portfolio_id, score_version, code)
 );
 
 create table if not exists ml_portfolio_construction_diagnostics (
@@ -248,6 +251,8 @@ create table if not exists ml_portfolio_construction_diagnostics (
 create table if not exists ml_backtest_orders (
     run_id varchar,
     fold_id varchar,
+    strategy_id varchar,
+    score_version varchar,
     sim_date varchar not null,
     decision_date varchar not null,
     code varchar not null,
@@ -269,13 +274,14 @@ create table if not exists ml_backtest_orders (
     entry_reason varchar,
     exit_reason varchar,
     sell_blocked_reason varchar,
-    strategy_id varchar,
     realized_pnl double
 );
 
 create table if not exists ml_backtest_positions (
     run_id varchar,
     fold_id varchar,
+    strategy_id varchar,
+    score_version varchar,
     sim_date varchar not null,
     code varchar not null,
     position_qty double,
@@ -291,6 +297,8 @@ create table if not exists ml_backtest_positions (
 create table if not exists ml_backtest_nav (
     run_id varchar,
     fold_id varchar,
+    strategy_id varchar,
+    score_version varchar,
     sim_date varchar not null,
     nav double not null,
     cash double not null,

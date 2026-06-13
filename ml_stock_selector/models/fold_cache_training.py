@@ -139,6 +139,7 @@ def _save_ranker_artifact(
     artifact_path = artifact_dir / f"{model_id}.pkl"
     with artifact_path.open("wb") as handle:
         pickle.dump(model, handle)
+    _write_json(artifact_dir / f"{model_id}.params.json", _lightgbm_runtime_params(config))
     return ModelArtifact(
         model_id,
         model_type,
@@ -174,6 +175,7 @@ def _save_risk_artifact(
     artifact_path = artifact_dir / f"{model_id}.pkl"
     with artifact_path.open("wb") as handle:
         pickle.dump(model, handle)
+    _write_json(artifact_dir / f"{model_id}.params.json", _lightgbm_runtime_params(config))
     return ModelArtifact(
         model_id,
         MODEL_TYPE_RISK,
@@ -292,3 +294,7 @@ def _artifact_metrics(model, train_rows: int) -> dict[str, float]:
     if best_iteration is not None:
         metrics["best_iteration"] = float(best_iteration)
     return metrics
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")

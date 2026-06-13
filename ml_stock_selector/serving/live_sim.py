@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -69,6 +69,20 @@ class LiveSimDayResult:
     holdings: pd.DataFrame
     nav: dict[str, float | str]
     report_path: Path | None = None
+
+
+def live_sim_reproducibility_snapshot(config: LiveSimConfig) -> dict[str, object]:
+    constraints = asdict(config.constraints)
+    execution = asdict(config.execution)
+    return {
+        "score_version": SCORE_VERSION,
+        "account_id": config.account_id,
+        "portfolio_id": config.portfolio_id,
+        "initial_cash": config.initial_cash,
+        "target_positions": config.target_positions,
+        "execution": execution,
+        "constraints": constraints,
+    }
 
 
 def init_live_sim_db(path: Path | str) -> duckdb.DuckDBPyConnection:

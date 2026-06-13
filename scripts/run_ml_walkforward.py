@@ -88,10 +88,17 @@ def main() -> None:
         for item in results:
             if not args.use_feature_store:
                 upsert_dataframe(con, "ml_predictions_daily", item.predictions, ["trade_date", "code", "model_id", "horizon_d"])
-            upsert_dataframe(con, "ml_portfolio_targets_daily", item.targets, ["trade_date", "portfolio_id", "code"])
+            target_score_version = str(item.metrics.get("score_version") or args.score_version)
+            targets = _annotate_targets(
+                item.targets,
+                str(item.metrics.get("run_id") or args.run_id or "legacy_walkforward"),
+                item.fold_id,
+                target_score_version,
+            )
+            upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version", "code"])
             diagnostics = item.backtest_result.portfolio_diagnostics
             if diagnostics is None or diagnostics.empty:
-                diagnostics = get_portfolio_diagnostics(item.targets)
+                diagnostics = get_portfolio_diagnostics(targets)
             upsert_dataframe(con, "ml_portfolio_construction_diagnostics", diagnostics, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version"])
             metrics = [
                 {"run_id": item.metrics.get("run_id"), "fold_id": item.fold_id, "score_version": "v2_three_model", "metric_name": "annualized_return", "metric_value": annualized_return(item.backtest_result.nav), "segment": "fold"},
@@ -101,6 +108,16 @@ def main() -> None:
     finally:
         con.close()
     print(f"folds={len(results)}")
+
+
+def _annotate_targets(targets: pd.DataFrame, run_id: str, fold_id: str, score_version: str) -> pd.DataFrame:
+    if targets.empty:
+        return targets
+    out = targets.copy()
+    out["run_id"] = run_id
+    out["fold_id"] = fold_id
+    out["score_version"] = score_version
+    return out
 
 
 def _parse_bool(value: str | bool) -> bool:
