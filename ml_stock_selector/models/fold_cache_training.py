@@ -13,6 +13,12 @@ from ml_stock_selector.constants import MODEL_TYPE_ACTIVE_RANKER, MODEL_TYPE_RAN
 from ml_stock_selector.matrix_cache import FoldMatrixCache, load_train_matrix, load_valid_matrix
 from ml_stock_selector.models.alpha_ranker import LightGBMRankerAdapter, LinearFallbackModel
 from ml_stock_selector.models.artifacts import ModelArtifact
+from ml_stock_selector.models.config import (
+    LightGBMRankerConfig,
+    LightGBMRiskConfig,
+    ranker_config_from_model_section,
+    risk_config_from_model_section,
+)
 from ml_stock_selector.models.risk_model import LightGBMClassifierAdapter, LogisticFallbackModel
 
 
@@ -50,6 +56,8 @@ def train_three_models_from_fold_cache(
     feature_set_id = str(manifest["feature_set_id"])
     label_base = str(manifest["label_base"])
     horizon_d = int(manifest["horizon_d"])
+    ranker_config = ranker_config_from_model_section(getattr(config, "model", {}))
+    risk_config = risk_config_from_model_section(getattr(config, "model", {}))
 
     return ThreeModelFoldArtifacts(
         absolute=_save_ranker_artifact(
@@ -68,7 +76,7 @@ def train_three_models_from_fold_cache(
             horizon_d,
             cache.feature_schema_path,
             artifact_dir,
-            config,
+            ranker_config,
         ),
         active=_save_ranker_artifact(
             "active_ranker",
@@ -86,7 +94,7 @@ def train_three_models_from_fold_cache(
             horizon_d,
             cache.feature_schema_path,
             artifact_dir,
-            config,
+            ranker_config,
         ),
         risk=_save_risk_artifact(
             x_train,
@@ -100,7 +108,7 @@ def train_three_models_from_fold_cache(
             horizon_d,
             cache.feature_schema_path,
             artifact_dir,
-            config,
+            risk_config,
         ),
     )
 
@@ -121,7 +129,7 @@ def _save_ranker_artifact(
     horizon_d: int,
     schema_path: Path,
     artifact_dir: Path,
-    config,
+    train_config: LightGBMRankerConfig,
 ) -> ModelArtifact:
     model_id = f"{prefix}_{uuid4().hex[:12]}"
     model = _train_lightgbm_ranker(
@@ -132,14 +140,14 @@ def _save_ranker_artifact(
         valid_target,
         group_valid,
         feature_columns,
-        config,
-    )
+            train_config,
+        )
     if model is None:
         model = LinearFallbackModel(feature_columns, {col: 0.0 for col in feature_columns}, float(np.nanmean(target) if len(target) else 0.0))
     artifact_path = artifact_dir / f"{model_id}.pkl"
     with artifact_path.open("wb") as handle:
         pickle.dump(model, handle)
-    _write_json(artifact_dir / f"{model_id}.params.json", _lightgbm_runtime_params(config))
+    _write_json(artifact_dir / f"{model_id}.params.json", train_config.to_params())
     return ModelArtifact(
         model_id,
         model_type,
@@ -166,16 +174,16 @@ def _save_risk_artifact(
     horizon_d: int,
     schema_path: Path,
     artifact_dir: Path,
-    config,
+    train_config: LightGBMRiskConfig,
 ) -> ModelArtifact:
     model_id = f"risk_model_{uuid4().hex[:12]}"
-    model = _train_lightgbm_classifier(x_train, target, x_valid, valid_target, feature_columns, config)
+    model = _train_lightgbm_classifier(x_train, target, x_valid, valid_target, feature_columns, train_config)
     if model is None:
         model = LogisticFallbackModel(feature_columns, {col: 0.0 for col in feature_columns}, 0.0)
     artifact_path = artifact_dir / f"{model_id}.pkl"
     with artifact_path.open("wb") as handle:
         pickle.dump(model, handle)
-    _write_json(artifact_dir / f"{model_id}.params.json", _lightgbm_runtime_params(config))
+    _write_json(artifact_dir / f"{model_id}.params.json", train_config.to_params())
     return ModelArtifact(
         model_id,
         MODEL_TYPE_RISK,
@@ -198,7 +206,7 @@ def _train_lightgbm_ranker(
     valid_target: np.ndarray,
     group_valid: np.ndarray,
     feature_columns: list[str],
-    config,
+    train_config: LightGBMRankerConfig,
 ):
     if x_train.shape[0] == 0 or group_train.size == 0:
         return None
@@ -206,18 +214,15 @@ def _train_lightgbm_ranker(
         from lightgbm import LGBMRanker
     except Exception:
         return None
-    params = _lightgbm_runtime_params(config)
+    params = train_config.to_params().copy()
     early_stopping_rounds = int(params.pop("early_stopping_rounds", 0) or 0)
+    eval_at = params.pop("eval_at", [10, 15])
     ranker = LGBMRanker(
-        objective="lambdarank",
-        metric="ndcg",
-        n_estimators=int(params.pop("n_estimators", 25)),
-        learning_rate=float(params.pop("learning_rate", 0.05)),
         verbose=-1,
         **params,
     )
     try:
-        fit_kwargs = {"group": group_train.tolist(), "eval_at": [10, 15]}
+        fit_kwargs = {"group": group_train.tolist(), "eval_at": eval_at}
         if early_stopping_rounds > 0 and x_valid.shape[0] > 0 and group_valid.size > 0:
             from lightgbm import early_stopping
 
@@ -234,19 +239,23 @@ def _train_lightgbm_ranker(
     return LightGBMRankerAdapter(ranker, feature_columns)
 
 
-def _train_lightgbm_classifier(x_train, target: np.ndarray, x_valid, valid_target: np.ndarray, feature_columns: list[str], config):
+def _train_lightgbm_classifier(
+    x_train,
+    target: np.ndarray,
+    x_valid,
+    valid_target: np.ndarray,
+    feature_columns: list[str],
+    train_config: LightGBMRiskConfig,
+):
     if x_train.shape[0] == 0 or len(set(target.tolist())) < 2:
         return None
     try:
         from lightgbm import LGBMClassifier
     except Exception:
         return None
-    params = _lightgbm_runtime_params(config)
+    params = train_config.to_params().copy()
     early_stopping_rounds = int(params.pop("early_stopping_rounds", 0) or 0)
     classifier = LGBMClassifier(
-        objective="binary",
-        n_estimators=int(params.pop("n_estimators", 25)),
-        learning_rate=float(params.pop("learning_rate", 0.05)),
         verbose=-1,
         **params,
     )
@@ -266,25 +275,6 @@ def _train_lightgbm_classifier(x_train, target: np.ndarray, x_valid, valid_targe
     except Exception:
         return None
     return LightGBMClassifierAdapter(classifier, feature_columns)
-
-
-def _lightgbm_runtime_params(config) -> dict[str, object]:
-    raw = {}
-    if hasattr(config, "model"):
-        raw = dict(config.model.get("lightgbm_runtime", {}))
-    return {
-        "n_estimators": int(raw.get("n_estimators", 25)),
-        "early_stopping_rounds": int(raw.get("early_stopping_rounds", 0)),
-        "num_threads": int(raw.get("num_threads", 8)),
-        "force_col_wise": bool(raw.get("force_col_wise", True)),
-        "histogram_pool_size": int(raw.get("histogram_pool_size", -1)),
-        "max_bin": int(raw.get("max_bin", 63)),
-        "num_leaves": int(raw.get("num_leaves", 31)),
-        "min_data_in_leaf": int(raw.get("min_data_in_leaf", 500)),
-        "feature_fraction": float(raw.get("feature_fraction", 0.8)),
-        "bagging_fraction": float(raw.get("bagging_fraction", 0.8)),
-        "bagging_freq": int(raw.get("bagging_freq", 1)),
-    }
 
 
 def _artifact_metrics(model, train_rows: int) -> dict[str, float]:

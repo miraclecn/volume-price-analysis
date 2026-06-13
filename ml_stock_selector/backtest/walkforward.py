@@ -23,6 +23,7 @@ from ml_stock_selector.matrix_cache import (
 from ml_stock_selector.models.active_ranker import train_active_ranker
 from ml_stock_selector.models.alpha_ranker import train_alpha_ranker
 from ml_stock_selector.models.artifacts import ModelArtifact
+from ml_stock_selector.models.config import artifact_params_json, ranker_config_from_model_section, risk_config_from_model_section
 from ml_stock_selector.models.fold_cache_training import train_three_models_from_fold_cache
 from ml_stock_selector.models.risk_model import train_risk_model
 from ml_stock_selector.portfolio.allocator import allocate_weights
@@ -56,6 +57,13 @@ def _portfolio_constraints_from_config(config) -> PortfolioConstraints:
     ml_v2 = config.ml_v2
     holding = portfolio.get("holding", {}) if isinstance(portfolio.get("holding", {}), dict) else {}
     exit_config = portfolio.get("exit", {}) if isinstance(portfolio.get("exit", {}), dict) else {}
+    def v2_threshold(key: str, fallback: object | None = None) -> object:
+        if key in ml_v2:
+            return ml_v2[key]
+        if key in portfolio:
+            return portfolio[key]
+        return fallback
+
     return PortfolioConstraints(
         min_trade_score=float(portfolio["min_trade_score"]),
         min_adv20_amount=float(portfolio.get("min_adv20_amount", 0.0)) or None,
@@ -66,15 +74,15 @@ def _portfolio_constraints_from_config(config) -> PortfolioConstraints:
         max_initial_entries=int(portfolio.get("max_initial_entries", portfolio["target_positions"])),
         max_new_entries_per_day=int(portfolio["max_new_entries_per_day"]),
         allow_cash=bool(portfolio["allow_cash"]),
-        min_candidate_pool_size=int(portfolio.get("min_candidate_pool_size", ml_v2.get("min_candidate_pool_size", 5))),
-        candidate_min_trade_score=float(portfolio.get("candidate_min_trade_score", ml_v2.get("candidate_min_trade_score", portfolio["min_trade_score"]))),
-        candidate_absolute_min_rank_pct=float(portfolio.get("candidate_absolute_min_rank_pct", ml_v2["candidate_absolute_min_rank_pct"])),
-        candidate_active_min_rank_pct=float(portfolio.get("candidate_active_min_rank_pct", ml_v2["candidate_active_min_rank_pct"])),
-        candidate_risk_max_rank_pct=float(portfolio.get("candidate_risk_max_rank_pct", ml_v2["candidate_risk_max_rank_pct"])),
-        core_absolute_min_rank_pct=float(portfolio.get("core_absolute_min_rank_pct", ml_v2["core_absolute_min_rank_pct"])),
-        core_active_min_rank_pct=float(portfolio.get("core_active_min_rank_pct", ml_v2["core_active_min_rank_pct"])),
-        core_risk_max_rank_pct=float(portfolio.get("core_risk_max_rank_pct", ml_v2["core_risk_max_rank_pct"])),
-        core_min_trade_score=float(portfolio.get("core_min_trade_score", ml_v2["core_min_trade_score"])),
+        min_candidate_pool_size=int(v2_threshold("min_candidate_pool_size", 5)),
+        candidate_min_trade_score=float(v2_threshold("candidate_min_trade_score", portfolio["min_trade_score"])),
+        candidate_absolute_min_rank_pct=float(v2_threshold("candidate_absolute_min_rank_pct")),
+        candidate_active_min_rank_pct=float(v2_threshold("candidate_active_min_rank_pct")),
+        candidate_risk_max_rank_pct=float(v2_threshold("candidate_risk_max_rank_pct")),
+        core_absolute_min_rank_pct=float(v2_threshold("core_absolute_min_rank_pct")),
+        core_active_min_rank_pct=float(v2_threshold("core_active_min_rank_pct")),
+        core_risk_max_rank_pct=float(v2_threshold("core_risk_max_rank_pct")),
+        core_min_trade_score=float(v2_threshold("core_min_trade_score")),
         exclude_bse=bool(portfolio.get("exclude_bse", config.universe.get("exclude_bse", False))),
         holding_policy=HoldingPolicy(
             min_hold_days=int(holding.get("min_hold_days", 3)),
@@ -111,6 +119,8 @@ def run_walkforward_experiment(
         horizon = int(labels["horizon_d"].iloc[0])
     label_base = str(config.labels.get("label_base", "from_next_open"))
     exclude_bse = bool(config.universe.get("exclude_bse", False))
+    ranker_config = ranker_config_from_model_section(config.model)
+    risk_config = risk_config_from_model_section(config.model)
     results: list[WalkForwardFoldResult] = []
     for idx, fold in enumerate(folds):
         fold_id = str(fold.get("fold_id", f"fold_{idx+1}"))
@@ -161,9 +171,9 @@ def run_walkforward_experiment(
         if abs_samples.empty or active_samples.empty or risk_samples.empty:
             continue
 
-        abs_artifact = train_alpha_ranker(abs_samples, feature_set_id, "absolute_label", label_base, horizon, artifact_dir, True)
-        active_artifact = train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, True)
-        risk_artifact = train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, True)
+        abs_artifact = train_alpha_ranker(abs_samples, feature_set_id, "absolute_label", label_base, horizon, artifact_dir, True, train_config=ranker_config)
+        active_artifact = train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, True, train_config=ranker_config)
+        risk_artifact = train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, True, train_config=risk_config)
         register_model(
             con,
             model_id=abs_artifact.model_id,
@@ -174,6 +184,7 @@ def run_walkforward_experiment(
             horizon_d=horizon,
             artifact_uri=str(abs_artifact.artifact_uri),
             feature_schema_uri=str(abs_artifact.feature_schema_uri),
+            params_json=artifact_params_json(abs_artifact),
             metrics_json=json.dumps(abs_artifact.metrics),
             notes=f"walkforward:{run_id}:{fold_id}",
             train_start=train_start,
@@ -193,6 +204,7 @@ def run_walkforward_experiment(
             horizon_d=horizon,
             artifact_uri=str(active_artifact.artifact_uri),
             feature_schema_uri=str(active_artifact.feature_schema_uri),
+            params_json=artifact_params_json(active_artifact),
             metrics_json=json.dumps(active_artifact.metrics),
             notes=f"walkforward:{run_id}:{fold_id}",
             train_start=train_start,
@@ -212,6 +224,7 @@ def run_walkforward_experiment(
             horizon_d=horizon,
             artifact_uri=str(risk_artifact.artifact_uri),
             feature_schema_uri=str(risk_artifact.feature_schema_uri),
+            params_json=artifact_params_json(risk_artifact),
             metrics_json=json.dumps(risk_artifact.metrics),
             notes=f"walkforward:{run_id}:{fold_id}",
             train_start=train_start,
@@ -356,6 +369,7 @@ def run_walkforward_feature_store_experiment(
                     horizon_d=artifact.horizon_d,
                     artifact_uri=str(artifact.artifact_uri),
                     feature_schema_uri=str(artifact.feature_schema_uri),
+                    params_json=artifact_params_json(artifact),
                     metrics_json=json.dumps(artifact.metrics),
                     notes=f"walkforward:{run_id}:{current_fold_id}:feature_store={feature_store_version}",
                     run_id=run_id,

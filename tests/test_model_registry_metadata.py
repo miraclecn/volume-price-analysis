@@ -17,6 +17,7 @@ def test_register_model_records_run_fold_and_feature_store_version(tmp_path):
         horizon_d=5,
         artifact_uri="model.pkl",
         feature_schema_uri="feature_schema.json",
+        params_json='{"n_estimators": 7}',
         run_id="run",
         fold_id="wf_2020",
         feature_store_version="v2_pv_only_001",
@@ -24,11 +25,11 @@ def test_register_model_records_run_fold_and_feature_store_version(tmp_path):
 
     row = con.execute(
         """
-        select run_id, fold_id, feature_store_version, is_active
+        select run_id, fold_id, feature_store_version, params_json, is_active
         from ml_model_registry
         where model_id = 'model'
         """
     ).fetchone()
     con.close()
 
-    assert row == ("run", "wf_2020", "v2_pv_only_001", False)
+    assert row == ("run", "wf_2020", "v2_pv_only_001", '{"n_estimators": 7}', False)

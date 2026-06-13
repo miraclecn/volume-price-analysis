@@ -257,6 +257,7 @@ create table if not exists ml_backtest_orders (
     decision_date varchar not null,
     code varchar not null,
     side varchar not null,
+    order_seq integer,
     qty double,
     target_weight double,
     order_px_ref varchar,

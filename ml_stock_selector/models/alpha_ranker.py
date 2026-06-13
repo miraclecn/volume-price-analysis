@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+import json
 import pickle
 
 import pandas as pd
@@ -10,6 +11,7 @@ import pandas as pd
 from ml_stock_selector.constants import MODEL_TYPE_RANKER
 from ml_stock_selector.feature_matrix import build_feature_matrix, load_feature_schema, save_feature_schema
 from ml_stock_selector.models.artifacts import ModelArtifact
+from ml_stock_selector.models.config import LightGBMRankerConfig
 
 
 @dataclass
@@ -54,12 +56,14 @@ def train_alpha_ranker(
     horizon_d: int,
     artifact_dir: Path | str,
     deny_industry: bool = False,
+    train_config: LightGBMRankerConfig | None = None,
 ) -> ModelArtifact:
     artifact_dir = Path(artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     matrix, schema = build_feature_matrix(samples, feature_set_id, fit=True, deny_industry=deny_industry)
     target = pd.to_numeric(samples[label_name], errors="coerce").fillna(0.0)
-    model = _train_lightgbm_ranker(matrix, target, samples) or LinearFallbackModel(
+    train_config = train_config or LightGBMRankerConfig()
+    model = _train_lightgbm_ranker(matrix, target, samples, train_config) or LinearFallbackModel(
         list(matrix.columns),
         _fit_linear_weights(matrix, target),
         float(target.mean() if len(target) else 0.0),
@@ -70,6 +74,7 @@ def train_alpha_ranker(
     save_feature_schema(schema, schema_path)
     with artifact_path.open("wb") as handle:
         pickle.dump(model, handle)
+    _write_json(artifact_dir / f"{model_id}.params.json", train_config.to_params())
     preds = model.predict_matrix(matrix)
     if len(samples) > 1 and float(preds.std(ddof=0) or 0.0) != 0.0 and float(target.std(ddof=0) or 0.0) != 0.0:
         train_corr = float(preds.corr(target))
@@ -101,7 +106,12 @@ def _fit_linear_weights(matrix: pd.DataFrame, target: pd.Series) -> dict[str, fl
     return weights
 
 
-def _train_lightgbm_ranker(matrix: pd.DataFrame, target: pd.Series, samples: pd.DataFrame):
+def _train_lightgbm_ranker(
+    matrix: pd.DataFrame,
+    target: pd.Series,
+    samples: pd.DataFrame,
+    train_config: LightGBMRankerConfig,
+):
     try:
         from lightgbm import LGBMRanker
     except Exception:
@@ -111,21 +121,20 @@ def _train_lightgbm_ranker(matrix: pd.DataFrame, target: pd.Series, samples: pd.
     group = samples.sort_values(["trade_date", "code"]).groupby("trade_date", sort=True).size().tolist()
     train_x = matrix.loc[samples.sort_values(["trade_date", "code"]).index]
     train_y = target.loc[train_x.index]
-    ranker = LGBMRanker(
-        objective="lambdarank",
-        metric="ndcg",
-        n_estimators=25,
-        learning_rate=0.05,
-        num_leaves=15,
-        min_data_in_leaf=1,
-        verbose=-1,
-    )
+    params = train_config.to_params().copy()
+    eval_at = params.pop("eval_at", [10, 15])
+    params.pop("early_stopping_rounds", None)
+    ranker = LGBMRanker(verbose=-1, **params)
     try:
-        ranker.fit(train_x, train_y.astype(int), group=group, eval_at=[10, 15])
+        ranker.fit(train_x, train_y.astype(int), group=group, eval_at=eval_at)
     except Exception:
         return None
 
     return LightGBMRankerAdapter(ranker, list(matrix.columns))
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
 def _rank_ic(samples: pd.DataFrame, preds: pd.Series, label_name: str) -> float:

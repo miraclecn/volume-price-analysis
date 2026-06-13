@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ml_stock_selector.config import load_ml_config
 from ml_stock_selector.models.active_ranker import train_active_ranker
 from ml_stock_selector.models.alpha_ranker import train_alpha_ranker
+from ml_stock_selector.models.config import artifact_params_json, ranker_config_from_model_section, risk_config_from_model_section
 from ml_stock_selector.models.risk_model import train_risk_model
 from ml_stock_selector.registry import activate_model, register_model
 from ml_stock_selector.sample_builder import build_training_samples
@@ -37,6 +38,7 @@ def main() -> None:
             label_base,
             Path(str(config.data["artifact_dir"])),
             config.ml_v2,
+            config.model,
             bool(config.universe.get("exclude_bse", False)),
             config.portfolio.get("v2", {}).get("min_adv20_amount", config.portfolio.get("min_adv20_amount")),
         )
@@ -51,6 +53,7 @@ def main() -> None:
                 horizon_d=artifact.horizon_d,
                 artifact_uri=str(artifact.artifact_uri),
                 feature_schema_uri=str(artifact.feature_schema_uri),
+                params_json=artifact_params_json(artifact),
             )
             activate_model(con, artifact.model_id)
     finally:
@@ -66,11 +69,14 @@ def train_model_artifacts(
     label_base: str,
     artifact_dir: Path,
     ml_v2: dict[str, object],
+    model_config: dict[str, object] | None = None,
     exclude_bse: bool = False,
     min_adv20_amount: object | None = None,
 ):
     artifacts = []
     deny_industry = bool(ml_v2.get("feature_matrix_v2_deny_industry"))
+    ranker_config = ranker_config_from_model_section(model_config)
+    risk_config = risk_config_from_model_section(model_config)
     absolute_label = "absolute_label" if bool(ml_v2.get("labels_v2_enabled")) and "absolute_label" in labels else "rank_label"
     absolute_samples = build_training_samples(
         feature_mart,
@@ -83,7 +89,7 @@ def train_model_artifacts(
         executable_only=True,
         min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
     )
-    artifacts.append(train_alpha_ranker(absolute_samples, feature_set_id, absolute_label, label_base, horizon, artifact_dir, deny_industry=deny_industry))
+    artifacts.append(train_alpha_ranker(absolute_samples, feature_set_id, absolute_label, label_base, horizon, artifact_dir, deny_industry=deny_industry, train_config=ranker_config))
     if bool(ml_v2.get("active_ranker_enabled")):
         active_samples = build_training_samples(
             feature_mart,
@@ -96,7 +102,7 @@ def train_model_artifacts(
             executable_only=True,
             min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
         )
-        artifacts.append(train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, deny_industry=deny_industry))
+        artifacts.append(train_active_ranker(active_samples, feature_set_id, "active_label", label_base, horizon, artifact_dir, deny_industry=deny_industry, train_config=ranker_config))
     if bool(ml_v2.get("risk_model_v2_enabled")):
         risk_samples = build_training_samples(
             feature_mart,
@@ -109,7 +115,7 @@ def train_model_artifacts(
             executable_only=True,
             min_adv20_amount=float(min_adv20_amount) if min_adv20_amount is not None else None,
         )
-        artifacts.append(train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, deny_industry=deny_industry))
+        artifacts.append(train_risk_model(risk_samples, feature_set_id, "risk_label", label_base, horizon, artifact_dir, deny_industry=deny_industry, train_config=risk_config))
     return artifacts
 
 

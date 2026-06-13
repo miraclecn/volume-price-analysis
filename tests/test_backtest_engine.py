@@ -25,6 +25,7 @@ def test_backtest_outputs_orders_positions_and_nav():
     assert not result.orders.empty
     assert not result.positions.empty
     assert result.nav.iloc[-1]["nav"] > 0
+    assert result.orders["order_seq"].tolist() == list(range(1, len(result.orders) + 1))
 
 
 def test_backtest_marks_nav_daily_after_entry_and_rebalances_to_target_weight():

@@ -25,6 +25,7 @@ from ml_stock_selector.portfolio.constructor import (
     get_portfolio_diagnostics,
 )
 from ml_stock_selector.portfolio.fixed_horizon import fixed_horizon_config_from_dict
+from ml_stock_selector.runtime.artifacts import prepare_run_artifact_dir, write_backtest_fold_artifacts
 from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates, score_candidates_v2
 from ml_stock_selector.storage import clear_backtest_outputs, clear_portfolio_targets, init_ml_db, upsert_dataframe
 
@@ -70,6 +71,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--feature-set-id")
     parser.add_argument("--horizon-d", type=int)
     parser.add_argument("--label-base")
+    parser.add_argument("--run-artifact-dir", default="outputs/ml/runs")
     return parser
 
 
@@ -190,6 +192,7 @@ def main() -> None:
         fold_id = identity.fold_id
         strategy_id = identity.strategy_id
         fixed_strategy = strategy_id in {STRATEGY_FIXED_5D_RISK_FILTER, STRATEGY_FIXED_5D_NO_RISK_EXIT}
+        strategy_params = {}
         if fixed_strategy:
             profile_name = "fixed_5d_no_risk_exit" if strategy_id == STRATEGY_FIXED_5D_NO_RISK_EXIT else "fixed_5d_risk_filter"
             loaded_constraints = fixed_horizon_config_from_dict(config.portfolio.get(profile_name, {}))
@@ -213,8 +216,10 @@ def main() -> None:
             )
             targets = pd.DataFrame()
             diagnostics = result.portfolio_diagnostics if result.portfolio_diagnostics is not None else pd.DataFrame()
+            strategy_params = fixed_constraints
         else:
             constraints = _apply_constraint_overrides(_portfolio_constraints_from_config(config), args)
+            strategy_params = constraints
             if bool(config.ml_v2["trade_score_v2_enabled"]):
                 scored = preds.copy()
                 if "trade_score_v2" not in scored or scored["trade_score_v2"].isna().any():
@@ -300,7 +305,7 @@ def main() -> None:
             upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version", "code"])
         if not diagnostics.empty and {"run_id", "fold_id", "portfolio_id", "score_version"}.issubset(diagnostics.columns):
             upsert_dataframe(con, "ml_portfolio_construction_diagnostics", diagnostics, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version"])
-        upsert_dataframe(con, "ml_backtest_orders", result.orders, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "decision_date", "code", "side"])
+        upsert_dataframe(con, "ml_backtest_orders", result.orders, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "decision_date", "code", "side", "order_seq"])
         upsert_dataframe(con, "ml_backtest_positions", result.positions, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "code"])
         upsert_dataframe(con, "ml_backtest_nav", result.nav, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date"])
         upsert_dataframe(con, "ml_backtest_metrics", metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
@@ -310,6 +315,45 @@ def main() -> None:
                 str(config.data["report_dir"]),
                 prefix=f"{portfolio_id}_portfolio_diagnostics",
             )
+        run_root = prepare_run_artifact_dir(
+            args.run_artifact_dir,
+            rid,
+            config_path=args.config,
+            run_manifest={
+                "run_type": "backtest",
+                "fold_id": fold_id,
+                "strategy_id": strategy_id,
+                "portfolio_id": portfolio_id,
+                "score_version": score_version,
+                "score_mode": args.score_mode,
+                "ml_db": ml_db,
+                "alpha_data_db": str(config.data["alpha_data_db"]),
+                "feature_set_id": args.feature_set_id or str(config.features["feature_set_id"]),
+                "horizon_d": args.horizon_d or int(config.labels["main_horizon"]),
+                "label_base": args.label_base or str(config.labels["label_base"]),
+            },
+        )
+        write_backtest_fold_artifacts(
+            run_root,
+            fold_id=fold_id,
+            strategy_id=strategy_id,
+            score_version=score_version,
+            portfolio_id=portfolio_id,
+            backtest_params={
+                "cli_args": vars(args),
+                "strategy_params": strategy_params,
+                "execution": ExecutionConfig(),
+                "initial_cash": float(config.backtest["initial_cash"]),
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+            targets=targets,
+            diagnostics=diagnostics,
+            orders=result.orders,
+            positions=result.positions,
+            nav=result.nav,
+            metrics=metrics,
+        )
     finally:
         con.close()
     print(f"nav_rows={len(result.nav)}")

@@ -147,6 +147,7 @@ def _run_backtest_loop(
     all_orders: list[dict[str, object]] = []
     nav_rows = []
     position_rows = []
+    next_order_seq = 1
     if bars.empty:
         return BacktestResult(pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), get_portfolio_diagnostics(targets))
     bars_sorted = bars.sort_values(["code", "trade_date"]).copy()
@@ -254,6 +255,9 @@ def _run_backtest_loop(
                 orders = orders[~orders["code"].astype(str).isin(pending_codes)].reset_index(drop=True)
             if not orders.empty:
                 records = orders.to_dict("records")
+                for record in records:
+                    record["order_seq"] = next_order_seq
+                    next_order_seq += 1
                 all_orders.extend(records)
                 pending_orders.extend(records)
     return BacktestResult(

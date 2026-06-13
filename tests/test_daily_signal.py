@@ -94,6 +94,8 @@ def test_daily_signal_v2_loads_three_models_and_writes_v2_scores(tmp_path):
     assert predictions["score_version"].eq(SCORE_VERSION_THREE_MODEL).all()
     assert {"absolute_score", "active_score", "risk_prob", "core_score", "trade_score_v2"}.issubset(predictions.columns)
     assert {"entry_reason", "hold_reason", "exit_reason", "sell_blocked_reason"}.issubset(targets.columns)
+    assert {"run_id", "fold_id", "score_version"}.issubset(targets.columns)
+    assert targets["score_version"].eq(SCORE_VERSION_THREE_MODEL).all()
 
 
 def test_daily_signal_v2_passes_current_holdings_to_portfolio_constructor(monkeypatch, tmp_path):
@@ -149,7 +151,7 @@ def test_daily_signal_v2_passes_current_holdings_to_portfolio_constructor(monkey
         lambda frame, artifact: pd.Series([0.9, 0.8] if artifact.model_id != "risk" else [0.1, 0.2], index=frame.index),
     )
 
-    def fake_construct(predictions, constraints, portfolio_id, *, current_holdings):
+    def fake_construct(predictions, constraints, portfolio_id, *, current_holdings, **_metadata):
         captured["current_holdings"] = current_holdings.copy()
         return pd.DataFrame(
             [

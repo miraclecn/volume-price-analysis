@@ -180,12 +180,13 @@ def test_backtest_outputs_are_strategy_and_score_scoped_and_clearable(tmp_path):
         assert "fold_id" in _columns(con, table_name)
         assert "strategy_id" in _columns(con, table_name)
         assert "score_version" in _columns(con, table_name)
+    assert "order_seq" in _columns(con, "ml_backtest_orders")
 
     orders = pd.DataFrame(
         [
-            {"run_id": "run", "fold_id": "wf_2020", "strategy_id": "s1", "score_version": "v1", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "a", "side": "buy", "status": "filled"},
-            {"run_id": "run", "fold_id": "wf_2020", "strategy_id": "s2", "score_version": "v1", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "b", "side": "buy", "status": "filled"},
-            {"run_id": "run", "fold_id": "wf_2020", "strategy_id": "s1", "score_version": "v2", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "c", "side": "buy", "status": "filled"},
+            {"run_id": "run", "fold_id": "wf_2020", "strategy_id": "s1", "score_version": "v1", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "a", "side": "buy", "order_seq": 1, "status": "filled"},
+            {"run_id": "run", "fold_id": "wf_2020", "strategy_id": "s2", "score_version": "v1", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "b", "side": "buy", "order_seq": 1, "status": "filled"},
+            {"run_id": "run", "fold_id": "wf_2020", "strategy_id": "s1", "score_version": "v2", "sim_date": "2020-01-03", "decision_date": "2020-01-02", "code": "c", "side": "buy", "order_seq": 1, "status": "filled"},
             {"run_id": "run", "sim_date": "2020-01-04", "decision_date": "2020-01-03", "code": "legacy", "side": "sell", "status": "filled"},
         ]
     )
@@ -205,7 +206,7 @@ def test_backtest_outputs_are_strategy_and_score_scoped_and_clearable(tmp_path):
             {"run_id": "run", "sim_date": "2020-01-04", "nav": 3.0, "cash": 3.0, "gross_exposure": 0.0, "turnover": 0.0},
         ]
     )
-    upsert_dataframe(con, "ml_backtest_orders", orders, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "decision_date", "code", "side"])
+    upsert_dataframe(con, "ml_backtest_orders", orders, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "decision_date", "code", "side", "order_seq"])
     upsert_dataframe(con, "ml_backtest_positions", positions, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "code"])
     upsert_dataframe(con, "ml_backtest_nav", nav, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date"])
 

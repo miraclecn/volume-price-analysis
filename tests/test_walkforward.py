@@ -79,10 +79,12 @@ def _synthetic_walkforward_inputs(tmp_path):
     config.ml_v2["candidate_absolute_min_rank_pct"] = 0.0
     config.ml_v2["candidate_active_min_rank_pct"] = 0.0
     config.ml_v2["candidate_risk_max_rank_pct"] = 1.0
+    config.ml_v2["candidate_min_trade_score"] = 0.0
     config.ml_v2["core_absolute_min_rank_pct"] = 0.0
     config.ml_v2["core_active_min_rank_pct"] = 0.0
     config.ml_v2["core_risk_max_rank_pct"] = 1.0
     config.ml_v2["core_min_trade_score"] = -999.0
+    config.portfolio["v2"]["exit"]["sell_score_threshold"] = -1.0
     return bars, tradeability, feature_mart, labels, config
 
 

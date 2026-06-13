@@ -6,8 +6,25 @@ identity refactor expands further.
 ## Code Baseline
 
 - Branch point: `771375c Add files via upload`
+- Baseline tag: `vpa-ml-pre-refactor-202606`
+- Baseline commit: `771375c3d8ce94ba9c7f4aa8303ec90dfad8af3d`
 - Refactor branch: `feature/reproducible-live-refactor`
 - Primary plan: `docs/vpa_ml_refactor_plan.md`
+
+## Data And Artifact Snapshot
+
+- ML DuckDB path: `outputs/ml/ml.duckdb`
+- ML DuckDB size at baseline audit: `110276128768` bytes
+- ML DuckDB mtime at baseline audit: `2026-06-12 17:45:08 +0800`
+- Artifact path: `outputs/ml/artifacts`
+- Artifact file count at baseline audit: `273`
+- Artifact size at baseline audit: `30M`
+
+The ML DuckDB file is roughly 110GB. A physical copy was attempted with
+`cp --reflink=auto`, but the filesystem did not complete it as a cheap CoW
+snapshot. The partial copy was removed to avoid a misleading backup. The
+baseline therefore records the exact source path and metadata; a full physical
+database backup should be created outside git before destructive data changes.
 
 ## Live Simulation Model Lane
 

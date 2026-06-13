@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
+import json
 import math
 import pickle
 
@@ -12,6 +13,7 @@ from ml_stock_selector.constants import MODEL_TYPE_RISK
 from ml_stock_selector.feature_matrix import build_feature_matrix, load_feature_schema, save_feature_schema
 from ml_stock_selector.models.alpha_ranker import _fit_linear_weights
 from ml_stock_selector.models.artifacts import ModelArtifact
+from ml_stock_selector.models.config import LightGBMRiskConfig
 
 
 @dataclass
@@ -60,12 +62,14 @@ def train_risk_model(
     horizon_d: int,
     artifact_dir: Path | str,
     deny_industry: bool = False,
+    train_config: LightGBMRiskConfig | None = None,
 ) -> ModelArtifact:
     artifact_dir = Path(artifact_dir)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     matrix, schema = build_feature_matrix(samples, feature_set_id, fit=True, deny_industry=deny_industry)
     target = pd.to_numeric(samples[label_name], errors="coerce").fillna(0).astype(int)
-    model = _train_lightgbm_classifier(matrix, target) or LogisticFallbackModel(
+    train_config = train_config or LightGBMRiskConfig()
+    model = _train_lightgbm_classifier(matrix, target, train_config) or LogisticFallbackModel(
         list(matrix.columns),
         _fit_linear_weights(matrix, target.astype(float)),
         _logit(float(target.mean() if len(target) else 0.0)),
@@ -76,6 +80,7 @@ def train_risk_model(
     save_feature_schema(schema, schema_path)
     with artifact_path.open("wb") as handle:
         pickle.dump(model, handle)
+    _write_json(artifact_dir / f"{model_id}.params.json", train_config.to_params())
     probs = model.predict_proba_matrix(matrix)
     metrics = _risk_metrics(target, probs)
     return ModelArtifact(model_id, MODEL_TYPE_RISK, feature_set_id, label_name, label_base, horizon_d, schema_path, artifact_path, artifact_dir, metrics)
@@ -85,26 +90,25 @@ def load_risk_model(artifact: ModelArtifact) -> LoadedRiskModel:
     return LoadedRiskModel(artifact)
 
 
-def _train_lightgbm_classifier(matrix: pd.DataFrame, target: pd.Series):
+def _train_lightgbm_classifier(matrix: pd.DataFrame, target: pd.Series, train_config: LightGBMRiskConfig):
     if matrix.empty or target.nunique(dropna=True) < 2:
         return None
     try:
         from lightgbm import LGBMClassifier
     except Exception:
         return None
-    classifier = LGBMClassifier(
-        objective="binary",
-        n_estimators=25,
-        learning_rate=0.05,
-        num_leaves=15,
-        min_data_in_leaf=1,
-        verbose=-1,
-    )
+    params = train_config.to_params().copy()
+    params.pop("early_stopping_rounds", None)
+    classifier = LGBMClassifier(verbose=-1, **params)
     try:
         classifier.fit(matrix, target)
     except Exception:
         return None
     return LightGBMClassifierAdapter(classifier, list(matrix.columns))
+
+
+def _write_json(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 
 
 def _risk_metrics(target: pd.Series, probs: pd.Series) -> dict[str, float]:

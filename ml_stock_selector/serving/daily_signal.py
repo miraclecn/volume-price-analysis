@@ -4,7 +4,13 @@ import pickle
 
 import pandas as pd
 
-from ml_stock_selector.constants import MODEL_TYPE_ACTIVE_RANKER, MODEL_TYPE_RANKER, MODEL_TYPE_RISK
+from ml_stock_selector.constants import (
+    MODEL_TYPE_ACTIVE_RANKER,
+    MODEL_TYPE_RANKER,
+    MODEL_TYPE_RISK,
+    SCORE_VERSION_LEGACY,
+    SCORE_VERSION_THREE_MODEL,
+)
 from ml_stock_selector.feature_matrix import load_feature_schema
 from ml_stock_selector.feature_store_reader import FeatureStoreSpec, iter_feature_store_batches
 from ml_stock_selector.portfolio.allocator import allocate_weights
@@ -33,8 +39,12 @@ def generate_daily_signal(
     exclude_bse: bool = False,
     feature_store_spec: FeatureStoreSpec | None = None,
     current_holdings: pd.DataFrame | None = None,
+    run_id: str = "daily_signal",
+    fold_id: str = "daily",
+    score_version: str | None = None,
 ):
     constraints = constraints or (PortfolioConstraints() if use_v2 else PortfolioConstraints(min_trade_score=-999.0))
+    score_version = score_version or (SCORE_VERSION_THREE_MODEL if use_v2 else SCORE_VERSION_LEGACY)
     rank_label = "absolute_label" if use_v2 else "rank_label"
     artifact = load_active_model(con, MODEL_TYPE_RANKER, feature_set_id, rank_label, "from_next_open", horizon_d)
     feature_mart = _load_daily_features(con, as_of_date, feature_set_id, feature_store_spec)
@@ -89,6 +99,9 @@ def generate_daily_signal(
             constraints,
             portfolio_id,
             current_holdings=current_holdings,
+            run_id=run_id,
+            fold_id=fold_id,
+            score_version=score_version,
         )
     else:
         predictions = score_candidates(add_liquidity_score(add_context_score(predictions)))
@@ -96,11 +109,50 @@ def generate_daily_signal(
         targets = construct_portfolio_targets(predictions, constraints, portfolio_id)
     diagnostics = get_portfolio_diagnostics(targets)
     targets = allocate_weights(targets, 0.05, 0.10, allow_cash=True)
+    predictions["run_id"] = run_id
+    predictions["fold_id"] = fold_id
+    predictions["score_version"] = score_version
+    targets = _annotate_targets(targets, run_id, fold_id, portfolio_id, score_version)
+    diagnostics = _annotate_diagnostics(diagnostics, run_id, fold_id, portfolio_id, score_version)
     predictions = _annotate_selection_reasons(predictions, hard_filtered, targets, constraints)
     upsert_dataframe(con, "ml_predictions_daily", predictions, ["trade_date", "code", "model_id", "horizon_d"])
-    upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "portfolio_id", "code"])
+    upsert_dataframe(con, "ml_portfolio_targets_daily", targets, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version", "code"])
     upsert_dataframe(con, "ml_portfolio_construction_diagnostics", diagnostics, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version"])
     return predictions, targets
+
+
+def _annotate_targets(
+    targets: pd.DataFrame,
+    run_id: str,
+    fold_id: str,
+    portfolio_id: str,
+    score_version: str,
+) -> pd.DataFrame:
+    if targets.empty:
+        return targets
+    out = targets.copy()
+    out["run_id"] = run_id
+    out["fold_id"] = fold_id
+    out["portfolio_id"] = portfolio_id
+    out["score_version"] = score_version
+    return out
+
+
+def _annotate_diagnostics(
+    diagnostics: pd.DataFrame,
+    run_id: str,
+    fold_id: str,
+    portfolio_id: str,
+    score_version: str,
+) -> pd.DataFrame:
+    if diagnostics.empty:
+        return diagnostics
+    out = diagnostics.copy()
+    out["run_id"] = run_id
+    out["fold_id"] = fold_id
+    out["portfolio_id"] = portfolio_id
+    out["score_version"] = score_version
+    return out
 
 
 def _load_daily_features(
