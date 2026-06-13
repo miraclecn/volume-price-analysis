@@ -35,6 +35,7 @@ def test_init_ml_db_creates_required_ml_tables(tmp_path):
         "ml_backtest_metrics",
         "ml_runs",
         "ml_run_folds",
+        "ml_model_bundles",
     }.issubset(tables)
 
 

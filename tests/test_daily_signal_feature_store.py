@@ -11,7 +11,7 @@ from ml_stock_selector.feature_store_reader import FeatureStoreSpec
 from ml_stock_selector.models.alpha_ranker import LinearFallbackModel
 from ml_stock_selector.models.risk_model import LogisticFallbackModel
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints
-from ml_stock_selector.registry import activate_model, register_model
+from ml_stock_selector.registry import activate_model_bundle, register_model, register_model_bundle
 from ml_stock_selector.serving.daily_signal import generate_daily_signal
 from ml_stock_selector.storage import init_ml_db, upsert_dataframe
 
@@ -105,7 +105,21 @@ def test_daily_signal_can_read_as_of_date_from_feature_store_without_feature_jso
             artifact_uri=str(artifact_path),
             feature_schema_uri=str(schema_path),
         )
-        activate_model(con, model_id)
+    register_model_bundle(
+        con,
+        bundle_id="bundle_feature_store",
+        run_id="run_feature_store",
+        bundle_role="production",
+        absolute_model_id="abs",
+        active_model_id="act",
+        risk_model_id="risk",
+        feature_set_id="vpa_d_sequence",
+        label_base="from_next_open",
+        horizon_d=5,
+        score_version="v2_three_model",
+        artifact_dir=str(tmp_path / "bundle_feature_store"),
+    )
+    activate_model_bundle(con, "bundle_feature_store")
 
     predictions, targets = generate_daily_signal(
         con,

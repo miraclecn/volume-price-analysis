@@ -10,7 +10,7 @@ from ml_stock_selector.models.active_ranker import train_active_ranker
 from ml_stock_selector.models.alpha_ranker import train_alpha_ranker
 from ml_stock_selector.models.config import artifact_params_json, ranker_config_from_model_section, risk_config_from_model_section
 from ml_stock_selector.models.risk_model import train_risk_model
-from ml_stock_selector.registry import activate_model, register_model
+from ml_stock_selector.registry import register_model
 from ml_stock_selector.sample_builder import build_training_samples
 from ml_stock_selector.storage import init_ml_db
 from ml_stock_selector.universe import apply_universe_filter
@@ -55,7 +55,6 @@ def main() -> None:
                 feature_schema_uri=str(artifact.feature_schema_uri),
                 params_json=artifact_params_json(artifact),
             )
-            activate_model(con, artifact.model_id)
     finally:
         con.close()
     print("model_ids=" + ",".join(artifact.model_id for artifact in artifacts))

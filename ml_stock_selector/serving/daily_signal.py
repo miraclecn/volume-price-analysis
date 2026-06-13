@@ -23,7 +23,7 @@ from ml_stock_selector.portfolio.constructor import construct_portfolio_targets,
 from ml_stock_selector.portfolio.constructor import get_portfolio_diagnostics
 from ml_stock_selector.prediction import build_prediction_rows, build_three_model_prediction_rows, predict_with_model
 from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates, score_candidates_v2
-from ml_stock_selector.serving.artifact_loader import load_active_model
+from ml_stock_selector.serving.artifact_loader import load_active_model, load_active_model_bundle
 from ml_stock_selector.storage import upsert_dataframe
 from ml_stock_selector.universe import apply_universe_filter
 
@@ -46,12 +46,22 @@ def generate_daily_signal(
     constraints = constraints or (PortfolioConstraints() if use_v2 else PortfolioConstraints(min_trade_score=-999.0))
     score_version = score_version or (SCORE_VERSION_THREE_MODEL if use_v2 else SCORE_VERSION_LEGACY)
     rank_label = "absolute_label" if use_v2 else "rank_label"
-    artifact = load_active_model(con, MODEL_TYPE_RANKER, feature_set_id, rank_label, "from_next_open", horizon_d)
+    if use_v2:
+        bundle = load_active_model_bundle(
+            con,
+            bundle_role="production",
+            feature_set_id=feature_set_id,
+            label_base="from_next_open",
+            horizon_d=horizon_d,
+        )
+        artifact = bundle["absolute"]
+    else:
+        artifact = load_active_model(con, MODEL_TYPE_RANKER, feature_set_id, rank_label, "from_next_open", horizon_d)
     feature_mart = _load_daily_features(con, as_of_date, feature_set_id, feature_store_spec)
     feature_mart = apply_universe_filter(feature_mart, exclude_bse=exclude_bse)
     if use_v2:
-        active = load_active_model(con, MODEL_TYPE_ACTIVE_RANKER, feature_set_id, "active_label", "from_next_open", horizon_d)
-        risk = load_active_model(con, MODEL_TYPE_RISK, feature_set_id, "risk_label", "from_next_open", horizon_d)
+        active = bundle["active"]
+        risk = bundle["risk"]
         if feature_store_spec is not None:
             absolute_scores = _predict_matrix_with_artifact(feature_mart, artifact, proba=False)
             active_scores = _predict_matrix_with_artifact(feature_mart, active, proba=False)

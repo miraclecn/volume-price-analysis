@@ -168,6 +168,26 @@ create table if not exists ml_run_folds (
     primary key (run_id, fold_id)
 );
 
+create table if not exists ml_model_bundles (
+    bundle_id varchar primary key,
+    run_id varchar not null,
+    fold_id varchar,
+    bundle_role varchar,
+    absolute_model_id varchar,
+    active_model_id varchar,
+    risk_model_id varchar,
+    feature_set_id varchar,
+    label_base varchar,
+    horizon_d integer,
+    score_version varchar,
+    artifact_dir varchar,
+    status varchar,
+    created_at varchar,
+    activated_at varchar,
+    deactivated_at varchar,
+    notes varchar
+);
+
 create table if not exists ml_predictions_daily (
     trade_date varchar not null,
     code varchar not null,

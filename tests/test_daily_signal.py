@@ -10,7 +10,7 @@ from ml_stock_selector.label_builder import build_labels
 from ml_stock_selector.models.alpha_ranker import train_alpha_ranker
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints
 from ml_stock_selector.portfolio.holding_policy import HoldingPolicy
-from ml_stock_selector.registry import activate_model, register_model
+from ml_stock_selector.registry import activate_model, activate_model_bundle, register_model, register_model_bundle
 from ml_stock_selector.sample_builder import build_training_samples
 from ml_stock_selector.serving.artifact_loader import load_active_model
 from ml_stock_selector.serving.daily_signal import generate_daily_signal
@@ -63,7 +63,7 @@ def test_daily_signal_v2_loads_three_models_and_writes_v2_scores(tmp_path):
     upsert_dataframe(con, "ml_feature_mart_daily", feature_mart, ["trade_date", "code", "feature_set_id"])
     for artifact in artifacts:
         register_model(con, model_id=artifact.model_id, model_type=artifact.model_type, feature_set_id=artifact.feature_set_id, label_name=artifact.label_name, label_base=artifact.label_base, horizon_d=artifact.horizon_d, artifact_uri=str(artifact.artifact_uri), feature_schema_uri=str(artifact.feature_schema_uri))
-        activate_model(con, artifact.model_id)
+    _register_and_activate_bundle(con, artifacts, tmp_path)
 
     predictions, targets = generate_daily_signal(
         con,
@@ -139,8 +139,12 @@ def test_daily_signal_v2_passes_current_holdings_to_portfolio_constructor(monkey
     captured = {}
 
     monkeypatch.setattr(
-        "ml_stock_selector.serving.daily_signal.load_active_model",
-        lambda _con, _model_type, _feature_set_id, label_name, _label_base, _horizon_d: artifacts[label_name],
+        "ml_stock_selector.serving.daily_signal.load_active_model_bundle",
+        lambda _con, **_kwargs: {
+            "absolute": artifacts["absolute_label"],
+            "active": artifacts["active_label"],
+            "risk": artifacts["risk_label"],
+        },
     )
     monkeypatch.setattr(
         "ml_stock_selector.serving.daily_signal._load_daily_features",
@@ -196,3 +200,22 @@ def test_daily_signal_v2_passes_current_holdings_to_portfolio_constructor(monkey
     con.close()
 
     assert captured["current_holdings"]["code"].tolist() == ["held"]
+
+
+def _register_and_activate_bundle(con, artifacts, tmp_path) -> None:
+    by_label = {artifact.label_name: artifact for artifact in artifacts}
+    register_model_bundle(
+        con,
+        bundle_id="bundle_test",
+        run_id="run_test",
+        bundle_role="production",
+        absolute_model_id=by_label["absolute_label"].model_id,
+        active_model_id=by_label["active_label"].model_id,
+        risk_model_id=by_label["risk_label"].model_id,
+        feature_set_id=FEATURE_SET_BASELINE_A,
+        label_base="from_next_open",
+        horizon_d=1,
+        score_version=SCORE_VERSION_THREE_MODEL,
+        artifact_dir=str(tmp_path / "bundle_test"),
+    )
+    activate_model_bundle(con, "bundle_test")
