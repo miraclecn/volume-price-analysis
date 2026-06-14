@@ -5,12 +5,14 @@ import pandas as pd
 from ml_stock_selector.backtest.metrics import (
     annualized_return,
     cash_days_ratio,
+    compare_backtest_metric_rows,
     max_drawdown,
     ndcg_at_k,
     pool_size_metrics,
     holding_period_metrics,
     rank_ic,
     summarize_fold_metric_rows,
+    summarize_walkforward_metric_rows,
     unknown_industry_daily_exposure,
 )
 from ml_stock_selector.backtest.engine import BacktestResult
@@ -171,3 +173,105 @@ def test_summarize_fold_metric_rows_include_p1_audit_metrics():
     }.issubset(metric_names)
     assert rows["strategy_id"].eq("p_v2").all()
     assert rows["start_date"].eq("2024-01-02").all()
+
+
+def test_summarize_fold_metric_rows_include_phase8_standard_risk_metrics():
+    result = BacktestResult(
+        orders=pd.DataFrame({"status": ["filled"], "side": ["buy"]}),
+        positions=pd.DataFrame(
+            {
+                "sim_date": ["2024-01-02", "2024-01-02", "2024-02-02"],
+                "code": ["a", "b", "a"],
+                "industry_code": ["I1", "I2", "I1"],
+                "weight": [0.4, 0.3, 0.5],
+            }
+        ),
+        nav=pd.DataFrame(
+            {
+                "sim_date": ["2024-01-02", "2024-01-03", "2024-02-01", "2024-02-02"],
+                "nav": [100.0, 110.0, 99.0, 120.0],
+                "turnover": [0.0, 0.1, 0.0, 0.2],
+                "gross_exposure": [0.4, 0.7, 0.0, 0.5],
+            }
+        ),
+    )
+
+    rows = summarize_fold_metric_rows(
+        result,
+        run_id="run",
+        fold_id="wf_2024",
+        score_version="v2_three_model",
+        strategy_id="holding_aware_v2",
+        start_date="2024-01-02",
+        end_date="2024-02-02",
+        candidate_pool_size=10,
+        core_pool_size=5,
+    )
+    values = dict(zip(rows["metric_name"], rows["metric_value"], strict=False))
+
+    assert {
+        "sharpe",
+        "sortino",
+        "volatility",
+        "win_rate_daily",
+        "win_rate_monthly",
+        "position_count_avg",
+        "best_month",
+        "worst_month",
+        "max_consecutive_loss_days",
+        "max_consecutive_loss_months",
+    }.issubset(values)
+    assert values["position_count_avg"] == 1.5
+    assert values["best_month"] > 0
+    assert values["worst_month"] < 0
+    assert values["max_consecutive_loss_days"] == 1.0
+
+
+def test_summarize_walkforward_metric_rows_captures_worst_year_and_high_return():
+    metrics = pd.DataFrame(
+        [
+            {"run_id": "run", "fold_id": "wf_2020", "score_version": "v2_three_model", "metric_name": "annual_return", "metric_value": 1.20, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2020", "score_version": "v2_three_model", "metric_name": "max_drawdown", "metric_value": -0.18, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2020", "score_version": "v2_three_model", "metric_name": "calmar_like", "metric_value": 6.6, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2021", "score_version": "v2_three_model", "metric_name": "annual_return", "metric_value": -0.10, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2021", "score_version": "v2_three_model", "metric_name": "max_drawdown", "metric_value": -0.35, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2021", "score_version": "v2_three_model", "metric_name": "calmar_like", "metric_value": -0.3, "segment": "fold"},
+        ]
+    )
+
+    rows = summarize_walkforward_metric_rows(metrics, run_id="run", score_version="v2_three_model")
+    values = dict(zip(rows["metric_name"], rows["metric_value"], strict=False))
+
+    assert values["mean_annual_return"] == 0.55
+    assert values["negative_year_count"] == 1.0
+    assert values["drawdown_over_30_count"] == 1.0
+    assert values["high_return_capture_ratio"] == 1.0
+    assert values["worst_year_return"] == -0.10
+    assert values["best_year_return"] == 1.20
+    assert rows["segment"].eq("walkforward").all()
+
+
+def test_compare_backtest_metric_rows_reports_score_and_fixed_horizon_deltas():
+    metrics = pd.DataFrame(
+        [
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_three_model", "metric_name": "annual_return", "metric_value": 0.40, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_three_model", "metric_name": "max_drawdown", "metric_value": -0.20, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_absolute_only", "metric_name": "annual_return", "metric_value": 0.30, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_absolute_only", "metric_name": "max_drawdown", "metric_value": -0.25, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_absolute_risk_filter", "metric_name": "annual_return", "metric_value": 0.35, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_absolute_risk_filter", "metric_name": "max_drawdown", "metric_value": -0.18, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_absolute_risk_sort", "metric_name": "annual_return", "metric_value": 0.37, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "holding_aware_v2", "score_version": "v2_absolute_risk_sort", "metric_name": "max_drawdown", "metric_value": -0.17, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "abs_ranker_fixed_5d_risk_filter_v1", "score_version": "abs_ranker_fixed_5d_risk_filter_v1", "metric_name": "annual_return", "metric_value": 0.28, "segment": "fold"},
+            {"run_id": "run", "fold_id": "wf_2024", "strategy_id": "abs_ranker_fixed_5d_no_risk_exit_v1", "score_version": "abs_ranker_fixed_5d_no_risk_exit_v1", "metric_name": "annual_return", "metric_value": 0.32, "segment": "fold"},
+        ]
+    )
+
+    rows = compare_backtest_metric_rows(metrics, run_id="run")
+    values = dict(zip(rows["metric_name"], rows["metric_value"], strict=False))
+
+    assert values["absolute_only_vs_three_model_delta"] == -0.10
+    assert values["risk_filter_return_delta"] == 0.05
+    assert values["absolute_risk_sort_vs_risk_filter_delta"] == 0.02
+    assert values["risk_exit_benefit"] == -0.04
+    assert values["fixed_horizon_vs_holding_aware_delta"] == -0.12

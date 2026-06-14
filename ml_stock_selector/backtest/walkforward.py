@@ -9,6 +9,8 @@ import pandas as pd
 
 from ml_stock_selector.backtest.engine import BacktestConfig, BacktestResult, run_holding_aware_backtest
 from ml_stock_selector.backtest.execution import ExecutionConfig
+from ml_stock_selector.backtest.metrics import summarize_fold_metric_rows
+from ml_stock_selector.backtest.reports import portfolio_diagnostics_report_metrics
 from ml_stock_selector.constants import FEATURE_SET_BASELINE_A
 from ml_stock_selector.constants import MODEL_TYPE_ACTIVE_RANKER, MODEL_TYPE_RANKER, MODEL_TYPE_RISK
 from ml_stock_selector.feature_store_reader import FeatureStoreSpec
@@ -289,6 +291,19 @@ def run_walkforward_experiment(
             score_version="v2_three_model",
         )
         metrics = {"rows": float(len(predictions)), "run_id": run_id, "score_version": "v2_three_model"}
+        diagnostic_report_metrics = portfolio_diagnostics_report_metrics(backtest.portfolio_diagnostics)
+        fold_metrics = summarize_fold_metric_rows(
+            backtest,
+            run_id=run_id,
+            fold_id=fold_id,
+            score_version="v2_three_model",
+            strategy_id="holding_aware_v2",
+            start_date=test_start,
+            end_date=test_end,
+            candidate_pool_size=diagnostic_report_metrics["avg_candidate_pool_size"],
+            core_pool_size=diagnostic_report_metrics["avg_core_pool_size"],
+            bse_excluded_count=0.0,
+        )
         if fold_artifact_root is not None:
             write_walkforward_fold_artifacts(
                 fold_artifact_root,
@@ -298,7 +313,7 @@ def run_walkforward_experiment(
                 orders=backtest.orders,
                 positions=backtest.positions,
                 nav=backtest.nav,
-                metrics=metrics,
+                metrics=fold_metrics,
                 models={"absolute": abs_artifact.model_id, "active": active_artifact.model_id, "risk": risk_artifact.model_id},
             )
         results.append(WalkForwardFoldResult(fold_id, [abs_artifact.model_id, active_artifact.model_id, risk_artifact.model_id], predictions, targets, backtest, metrics))
@@ -453,6 +468,19 @@ def run_walkforward_feature_store_experiment(
             )
             update_fold_manifest_status(cache.manifest_path, "backtested")
             metrics = {"rows": float(len(predictions)), "run_id": run_id, "score_version": score_version}
+            diagnostic_report_metrics = portfolio_diagnostics_report_metrics(backtest.portfolio_diagnostics)
+            fold_metrics = summarize_fold_metric_rows(
+                backtest,
+                run_id=run_id,
+                fold_id=current_fold_id,
+                score_version=score_version,
+                strategy_id="holding_aware_v2",
+                start_date=str(fold["test_start"]),
+                end_date=str(fold["test_end"]),
+                candidate_pool_size=diagnostic_report_metrics["avg_candidate_pool_size"],
+                core_pool_size=diagnostic_report_metrics["avg_core_pool_size"],
+                bse_excluded_count=0.0,
+            )
             if fold_artifact_root is not None:
                 write_walkforward_fold_artifacts(
                     fold_artifact_root,
@@ -462,7 +490,7 @@ def run_walkforward_feature_store_experiment(
                     orders=backtest.orders,
                     positions=backtest.positions,
                     nav=backtest.nav,
-                    metrics=metrics,
+                    metrics=fold_metrics,
                     models={"absolute": artifacts.absolute.model_id, "active": artifacts.active.model_id, "risk": artifacts.risk.model_id},
                 )
             results.append(

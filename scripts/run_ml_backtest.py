@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ml_stock_selector.backtest.engine import BacktestConfig, run_backtest, run_fixed_horizon_backtest, run_holding_aware_backtest
 from ml_stock_selector.backtest.execution import ExecutionConfig
 from ml_stock_selector.backtest.data_access import load_backtest_candidates
-from ml_stock_selector.backtest.metrics import summarize_fold_metric_rows
+from ml_stock_selector.backtest.metrics import compare_backtest_metric_rows, summarize_fold_metric_rows
 from ml_stock_selector.backtest.reports import (
     portfolio_diagnostics_report_metrics,
     write_portfolio_diagnostics_report,
@@ -333,6 +333,13 @@ def main() -> None:
         upsert_dataframe(con, "ml_backtest_positions", result.positions, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date", "code"])
         upsert_dataframe(con, "ml_backtest_nav", result.nav, ["run_id", "fold_id", "strategy_id", "score_version", "sim_date"])
         upsert_dataframe(con, "ml_backtest_metrics", metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
+        stored_metrics = con.execute(
+            "select * from ml_backtest_metrics where run_id = ? and fold_id = ?",
+            [rid, fold_id],
+        ).fetchdf()
+        comparison_metrics = compare_backtest_metric_rows(stored_metrics, run_id=rid, fold_id=fold_id)
+        if not comparison_metrics.empty:
+            upsert_dataframe(con, "ml_backtest_metrics", comparison_metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
         if not diagnostics.empty:
             write_portfolio_diagnostics_report(
                 diagnostics,

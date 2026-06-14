@@ -8,7 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ml_stock_selector.backtest.walkforward import run_walkforward_experiment, run_walkforward_feature_store_experiment
-from ml_stock_selector.backtest.metrics import annualized_return, max_drawdown
+from ml_stock_selector.backtest.metrics import summarize_fold_metric_rows, summarize_walkforward_metric_rows
+from ml_stock_selector.backtest.reports import portfolio_diagnostics_report_metrics
 from ml_stock_selector.config import load_ml_config
 from ml_stock_selector.data_access import load_normalized_stock_bars
 from ml_stock_selector.portfolio.constructor import get_portfolio_diagnostics
@@ -165,6 +166,7 @@ def main() -> None:
                 run_id=run_id,
                 run_artifact_root=context.artifact_root,
             )
+        fold_metric_frames: list[pd.DataFrame] = []
         for item in results:
             result_fold = next((fold for fold in config.split.get("folds", []) if str(fold.get("fold_id")) == item.fold_id), {"fold_id": item.fold_id})
             register_run_fold(con, context, result_fold, status="success")
@@ -182,11 +184,32 @@ def main() -> None:
             if diagnostics is None or diagnostics.empty:
                 diagnostics = get_portfolio_diagnostics(targets)
             upsert_dataframe(con, "ml_portfolio_construction_diagnostics", diagnostics, ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version"])
-            metrics = [
-                {"run_id": item.metrics.get("run_id"), "fold_id": item.fold_id, "score_version": "v2_three_model", "metric_name": "annualized_return", "metric_value": annualized_return(item.backtest_result.nav), "segment": "fold"},
-                {"run_id": item.metrics.get("run_id"), "fold_id": item.fold_id, "score_version": "v2_three_model", "metric_name": "max_drawdown", "metric_value": max_drawdown(item.backtest_result.nav), "segment": "fold"},
-            ]
-            upsert_dataframe(con, "ml_backtest_metrics", pd.DataFrame(metrics), ["run_id", "fold_id", "score_version", "metric_name", "segment"])
+            diagnostic_report_metrics = portfolio_diagnostics_report_metrics(diagnostics)
+            start_date = str(result_fold.get("test_start") or _date_min(item.backtest_result.nav, "sim_date") or _date_min(targets, "trade_date") or "")
+            end_date = str(result_fold.get("test_end") or _date_max(item.backtest_result.nav, "sim_date") or _date_max(targets, "trade_date") or "")
+            metrics = summarize_fold_metric_rows(
+                item.backtest_result,
+                run_id=str(item.metrics.get("run_id") or run_id),
+                fold_id=item.fold_id,
+                score_version=target_score_version,
+                strategy_id="holding_aware_v2",
+                start_date=start_date,
+                end_date=end_date,
+                candidate_pool_size=diagnostic_report_metrics["avg_candidate_pool_size"],
+                core_pool_size=diagnostic_report_metrics["avg_core_pool_size"],
+                bse_excluded_count=0.0,
+            )
+            fold_metric_frames.append(metrics)
+            upsert_dataframe(con, "ml_backtest_metrics", metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
+        if fold_metric_frames:
+            all_fold_metrics = pd.concat(fold_metric_frames, ignore_index=True)
+            summary_metrics = summarize_walkforward_metric_rows(
+                all_fold_metrics,
+                run_id=run_id,
+                score_version=args.score_version,
+                strategy_id="holding_aware_v2",
+            )
+            upsert_dataframe(con, "ml_backtest_metrics", summary_metrics, ["run_id", "fold_id", "score_version", "metric_name", "segment"])
         update_run_status(con, context, "success")
     finally:
         con.close()
@@ -226,6 +249,20 @@ def _annotate_targets(targets: pd.DataFrame, run_id: str, fold_id: str, score_ve
     out["fold_id"] = fold_id
     out["score_version"] = score_version
     return out
+
+
+def _date_min(frame: pd.DataFrame, column: str) -> str | None:
+    if frame.empty or column not in frame:
+        return None
+    values = frame[column].dropna()
+    return str(values.min()) if not values.empty else None
+
+
+def _date_max(frame: pd.DataFrame, column: str) -> str | None:
+    if frame.empty or column not in frame:
+        return None
+    values = frame[column].dropna()
+    return str(values.max()) if not values.empty else None
 
 
 def _parse_bool(value: str | bool) -> bool:
