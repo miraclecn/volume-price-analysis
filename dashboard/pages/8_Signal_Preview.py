@@ -1,0 +1,12 @@
+from __future__ import annotations
+
+from dashboard.queries import signal_preview
+from dashboard.ui import DEFAULT_DB, connect, render_table
+
+
+con = connect(DEFAULT_DB)
+try:
+    render_table("Signal Preview", signal_preview(con), db_path=DEFAULT_DB)
+finally:
+    con.close()
+

@@ -230,6 +230,63 @@ create table if not exists ml_strategy_allocation_daily (
     primary key (trade_date, strategy_id, sleeve, bundle_id, score_version)
 );
 
+create table if not exists live_target_positions (
+    trade_date varchar not null,
+    account_id varchar not null,
+    strategy_id varchar not null,
+    code varchar not null,
+    target_weight double,
+    target_value double,
+    source_bundle_id varchar,
+    source_sleeve varchar,
+    score_version varchar,
+    reason varchar,
+    generated_at varchar,
+    primary key (trade_date, account_id, strategy_id, code)
+);
+
+create table if not exists live_orders (
+    order_id varchar primary key,
+    trade_date varchar not null,
+    account_id varchar not null,
+    strategy_id varchar not null,
+    code varchar not null,
+    side varchar not null,
+    order_qty double,
+    order_price double,
+    status varchar,
+    block_reason varchar,
+    created_at varchar,
+    submitted_at varchar,
+    updated_at varchar
+);
+
+create table if not exists live_fills (
+    fill_id varchar primary key,
+    order_id varchar,
+    trade_date varchar,
+    code varchar,
+    side varchar,
+    fill_qty double,
+    fill_price double,
+    fill_time varchar,
+    commission double,
+    tax double,
+    slippage_bps double
+);
+
+create table if not exists live_risk_logs (
+    trade_date varchar,
+    account_id varchar,
+    strategy_id varchar,
+    check_name varchar,
+    severity varchar,
+    passed boolean,
+    action varchar,
+    reason varchar,
+    created_at varchar
+);
+
 create table if not exists ml_predictions_daily (
     trade_date varchar not null,
     code varchar not null,

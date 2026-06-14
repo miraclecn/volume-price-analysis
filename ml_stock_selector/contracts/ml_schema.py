@@ -16,4 +16,8 @@ REQUIRED_ML_TABLES = {
     "ml_market_regime_daily",
     "ml_model_health_daily",
     "ml_strategy_allocation_daily",
+    "live_target_positions",
+    "live_orders",
+    "live_fills",
+    "live_risk_logs",
 }

@@ -39,7 +39,125 @@ def test_init_ml_db_creates_required_ml_tables(tmp_path):
         "ml_market_regime_daily",
         "ml_model_health_daily",
         "ml_strategy_allocation_daily",
+        "live_target_positions",
+        "live_orders",
+        "live_fills",
+        "live_risk_logs",
     }.issubset(tables)
+
+
+def test_phase10_live_tables_are_upsertable(tmp_path):
+    con = init_ml_db(tmp_path / "ml.duckdb")
+    assert {
+        "trade_date",
+        "account_id",
+        "strategy_id",
+        "source_bundle_id",
+        "source_sleeve",
+    }.issubset(_columns(con, "live_target_positions"))
+    assert {"order_id", "status", "block_reason", "submitted_at"}.issubset(_columns(con, "live_orders"))
+    assert {"fill_id", "order_id", "slippage_bps"}.issubset(_columns(con, "live_fills"))
+    assert {"check_name", "severity", "passed", "action"}.issubset(_columns(con, "live_risk_logs"))
+
+    upsert_dataframe(
+        con,
+        "live_target_positions",
+        pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-06-12",
+                    "account_id": "paper",
+                    "strategy_id": "holding_aware_v2",
+                    "code": "000001.SZ",
+                    "target_weight": 0.05,
+                    "target_value": 50000.0,
+                    "source_bundle_id": "core_bundle",
+                    "source_sleeve": "core",
+                    "score_version": "v2_absolute_risk_filter",
+                    "reason": "selected",
+                    "generated_at": "t",
+                }
+            ]
+        ),
+        ["trade_date", "account_id", "strategy_id", "code"],
+    )
+    upsert_dataframe(
+        con,
+        "live_orders",
+        pd.DataFrame(
+            [
+                {
+                    "order_id": "ord_1",
+                    "trade_date": "2026-06-13",
+                    "account_id": "paper",
+                    "strategy_id": "holding_aware_v2",
+                    "code": "000001.SZ",
+                    "side": "buy",
+                    "order_qty": 1000.0,
+                    "order_price": 10.0,
+                    "status": "submitted",
+                    "created_at": "t",
+                }
+            ]
+        ),
+        ["order_id"],
+    )
+    upsert_dataframe(
+        con,
+        "live_fills",
+        pd.DataFrame(
+            [
+                {
+                    "fill_id": "fill_1",
+                    "order_id": "ord_1",
+                    "trade_date": "2026-06-13",
+                    "code": "000001.SZ",
+                    "side": "buy",
+                    "fill_qty": 1000.0,
+                    "fill_price": 10.05,
+                    "fill_time": "t",
+                    "commission": 3.0,
+                    "tax": 0.0,
+                    "slippage_bps": 50.0,
+                }
+            ]
+        ),
+        ["fill_id"],
+    )
+    upsert_dataframe(
+        con,
+        "live_risk_logs",
+        pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-06-12",
+                    "account_id": "paper",
+                    "strategy_id": "holding_aware_v2",
+                    "check_name": "target_count",
+                    "severity": "info",
+                    "passed": True,
+                    "action": "allow",
+                    "reason": "ok",
+                    "created_at": "t",
+                }
+            ]
+        ),
+        ["trade_date", "account_id", "strategy_id", "check_name"],
+    )
+
+    linked = con.execute(
+        """
+        select f.fill_id, p.source_sleeve, p.source_bundle_id
+        from live_fills f
+        join live_orders o using (order_id)
+        join live_target_positions p
+          on p.account_id = o.account_id
+         and p.strategy_id = o.strategy_id
+         and p.code = o.code
+        """
+    ).fetchall()
+    con.close()
+    assert linked == [("fill_1", "core", "core_bundle")]
 
 
 def test_phase9_strategy_tables_are_upsertable(tmp_path):
