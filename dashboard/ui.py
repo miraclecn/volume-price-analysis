@@ -29,7 +29,7 @@ def render_table(title: str, frame: pd.DataFrame, *, db_path: str = DEFAULT_DB) 
     st.set_page_config(page_title=title, layout="wide")
     st.title(title)
     st.caption(f"Read-only DuckDB source: {db_path}")
-    st.dataframe(frame, use_container_width=True, hide_index=True)
+    st.dataframe(frame, width="stretch", hide_index=True)
 
 
 def render_kv(title: str, values: dict[str, object], *, db_path: str = DEFAULT_DB) -> None:
@@ -43,4 +43,3 @@ def render_kv(title: str, values: dict[str, object], *, db_path: str = DEFAULT_D
     cols = st.columns(min(4, max(1, len(values))))
     for idx, (key, value) in enumerate(values.items()):
         cols[idx % len(cols)].metric(key, value)
-
