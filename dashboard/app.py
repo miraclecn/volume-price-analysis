@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from dashboard.queries import run_registry
 from dashboard.ui import DEFAULT_DB, connect, render_table
 
@@ -14,4 +19,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

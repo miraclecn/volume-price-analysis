@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 from dashboard.queries import fold_detail
 from dashboard.ui import DEFAULT_DB, connect, get_streamlit
 
@@ -19,4 +24,3 @@ try:
             st.dataframe(frame, use_container_width=True, hide_index=True)
 finally:
     con.close()
-

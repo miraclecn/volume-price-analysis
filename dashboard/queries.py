@@ -5,7 +5,8 @@ import pandas as pd
 
 
 def run_registry(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         with metric_pivot as (
             select
@@ -34,12 +35,28 @@ def run_registry(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         from ml_runs r
         left join metric_pivot m using (run_id)
         order by r.created_at desc nulls last, r.run_id
-        """
-    ).fetchdf()
+        """,
+        [
+            "run_id",
+            "experiment_name",
+            "run_type",
+            "status",
+            "feature_set_id",
+            "label_version",
+            "score_version",
+            "config_hash",
+            "git_commit",
+            "created_at",
+            "annual_return_mean",
+            "max_drawdown_worst",
+            "positive_year_ratio",
+        ],
+    )
 
 
 def walkforward_compare(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select run_id, strategy_id, score_version, metric_name, metric_value
         from ml_backtest_metrics
@@ -49,12 +66,14 @@ def walkforward_compare(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
               'max_of_max_drawdown', 'mean_calmar', 'high_return_capture_ratio'
           )
         order by run_id, strategy_id, score_version, metric_name
-        """
-    ).fetchdf()
+        """,
+        ["run_id", "strategy_id", "score_version", "metric_name", "metric_value"],
+    )
 
 
 def score_mode_compare(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select run_id, fold_id, strategy_id, score_version, metric_name, metric_value
         from ml_backtest_metrics
@@ -62,34 +81,38 @@ def score_mode_compare(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
           and score_version in ('v2_three_model', 'v2_absolute_only', 'v2_absolute_risk_filter', 'v2_absolute_risk_sort')
           and metric_name in ('annual_return', 'max_drawdown', 'calmar', 'calmar_like')
         order by run_id, fold_id, strategy_id, score_version, metric_name
-        """
-    ).fetchdf()
+        """,
+        ["run_id", "fold_id", "strategy_id", "score_version", "metric_name", "metric_value"],
+    )
 
 
 def fixed_horizon_compare(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select run_id, fold_id, strategy_id, score_version, metric_name, metric_value, segment
         from ml_backtest_metrics
         where strategy_id in ('holding_aware_v2', 'abs_ranker_fixed_5d_risk_filter_v1', 'abs_ranker_fixed_5d_no_risk_exit_v1')
            or metric_name in ('risk_exit_benefit', 'fixed_horizon_vs_holding_aware_delta', 'fixed_horizon_vs_holding_aware_drawdown_delta')
         order by run_id, fold_id, segment, strategy_id, metric_name
-        """
-    ).fetchdf()
+        """,
+        ["run_id", "fold_id", "strategy_id", "score_version", "metric_name", "metric_value", "segment"],
+    )
 
 
 def fold_detail(con: duckdb.DuckDBPyConnection, run_id: str | None = None, fold_id: str | None = None) -> dict[str, pd.DataFrame]:
     where, params = _run_fold_filter(run_id, fold_id)
     return {
-        "nav": con.execute(f"select * from ml_backtest_nav {where} order by sim_date", params).fetchdf(),
-        "orders": con.execute(f"select * from ml_backtest_orders {where} order by sim_date, code", params).fetchdf(),
-        "positions": con.execute(f"select * from ml_backtest_positions {where} order by sim_date, code", params).fetchdf(),
-        "diagnostics": con.execute(_diagnostics_query(run_id, fold_id), params).fetchdf(),
+        "nav": _fetchdf(con, f"select * from ml_backtest_nav {where} order by sim_date", ["sim_date", "nav"], params),
+        "orders": _fetchdf(con, f"select * from ml_backtest_orders {where} order by sim_date, code", ["sim_date", "code", "side", "status"], params),
+        "positions": _fetchdf(con, f"select * from ml_backtest_positions {where} order by sim_date, code", ["sim_date", "code", "weight"], params),
+        "diagnostics": _fetchdf(con, _diagnostics_query(run_id, fold_id), ["trade_date", "run_id", "fold_id", "portfolio_id"], params),
     }
 
 
 def model_bundle_summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select
             bundle_id,
@@ -108,23 +131,42 @@ def model_bundle_summary(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
             created_at
         from ml_model_bundles
         order by status desc nulls last, created_at desc nulls last, bundle_id
-        """
-    ).fetchdf()
+        """,
+        [
+            "bundle_id",
+            "run_id",
+            "fold_id",
+            "bundle_role",
+            "absolute_model_id",
+            "active_model_id",
+            "risk_model_id",
+            "feature_set_id",
+            "label_base",
+            "horizon_d",
+            "score_version",
+            "artifact_dir",
+            "status",
+            "created_at",
+        ],
+    )
 
 
 def portfolio_diagnostics(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select *
         from ml_portfolio_construction_diagnostics
         order by trade_date desc, run_id, fold_id, portfolio_id
         limit 5000
-        """
-    ).fetchdf()
+        """,
+        ["trade_date", "run_id", "fold_id", "portfolio_id", "score_version"],
+    )
 
 
 def signal_preview(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select
             p.trade_date,
@@ -145,12 +187,26 @@ def signal_preview(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
          and pred.score_version = p.score_version
         order by p.trade_date desc, p.source_sleeve, p.target_weight desc
         limit 5000
-        """
-    ).fetchdf()
+        """,
+        [
+            "trade_date",
+            "code",
+            "absolute_score",
+            "active_score",
+            "risk_prob",
+            "trade_score_v2",
+            "target_weight",
+            "reason",
+            "source_sleeve",
+            "source_bundle_id",
+            "score_version",
+        ],
+    )
 
 
 def live_monitor(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
-    return con.execute(
+    return _fetchdf(
+        con,
         """
         select
             coalesce(t.trade_date, o.trade_date) as trade_date,
@@ -168,8 +224,9 @@ def live_monitor(con: duckdb.DuckDBPyConnection) -> pd.DataFrame:
         left join live_fills f using (order_id)
         group by 1, 2, 3
         order by trade_date desc, account_id, strategy_id
-        """
-    ).fetchdf()
+        """,
+        ["trade_date", "account_id", "strategy_id", "target_count", "order_count", "fill_count", "avg_slippage_bps"],
+    )
 
 
 def data_health_summary(con: duckdb.DuckDBPyConnection) -> dict[str, object]:
@@ -216,3 +273,15 @@ def _safe_scalar(con: duckdb.DuckDBPyConnection, sql: str) -> object | None:
     except Exception:
         return None
     return row[0] if row else None
+
+
+def _fetchdf(
+    con: duckdb.DuckDBPyConnection,
+    sql: str,
+    columns: list[str],
+    params: list[str] | None = None,
+) -> pd.DataFrame:
+    try:
+        return con.execute(sql, params or []).fetchdf()
+    except (duckdb.CatalogException, duckdb.BinderException):
+        return pd.DataFrame(columns=columns)

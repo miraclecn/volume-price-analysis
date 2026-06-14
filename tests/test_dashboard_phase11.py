@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import duckdb
 import pandas as pd
 
 from dashboard.queries import (
@@ -38,6 +39,16 @@ def test_dashboard_phase11_pages_exist_and_are_read_only():
         assert "subprocess" not in text
         assert "run_ml_" not in text
         assert "run_live_pipeline" not in text
+
+
+def test_dashboard_entrypoints_bootstrap_repo_root_for_streamlit():
+    entrypoints = [
+        Path("dashboard/app.py"),
+        *sorted(Path("dashboard/pages").glob("*.py")),
+    ]
+    for file_path in entrypoints:
+        text = file_path.read_text(encoding="utf-8")
+        assert "sys.path.insert(0, str(Path(__file__).resolve().parents[" in text
 
 
 def test_dashboard_queries_cover_phase8_to_phase10_tables(tmp_path):
@@ -149,3 +160,18 @@ def test_dashboard_queries_cover_phase8_to_phase10_tables(tmp_path):
     assert live_monitor(con).iloc[0]["order_count"] == 1
     assert "table_count" in data_health_summary(con)
     con.close()
+
+
+def test_dashboard_queries_tolerate_uninitialized_database():
+    con = duckdb.connect(":memory:")
+    try:
+        assert run_registry(con).empty
+        assert walkforward_compare(con).empty
+        assert score_mode_compare(con).empty
+        assert fixed_horizon_compare(con).empty
+        assert model_bundle_summary(con).empty
+        assert signal_preview(con).empty
+        assert live_monitor(con).empty
+        assert data_health_summary(con)["table_count"] == 0
+    finally:
+        con.close()
