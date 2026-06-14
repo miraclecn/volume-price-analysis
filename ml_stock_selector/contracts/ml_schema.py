@@ -13,4 +13,7 @@ REQUIRED_ML_TABLES = {
     "ml_backtest_positions",
     "ml_backtest_nav",
     "ml_backtest_metrics",
+    "ml_market_regime_daily",
+    "ml_model_health_daily",
+    "ml_strategy_allocation_daily",
 }

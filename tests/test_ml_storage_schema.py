@@ -36,7 +36,102 @@ def test_init_ml_db_creates_required_ml_tables(tmp_path):
         "ml_runs",
         "ml_run_folds",
         "ml_model_bundles",
+        "ml_market_regime_daily",
+        "ml_model_health_daily",
+        "ml_strategy_allocation_daily",
     }.issubset(tables)
+
+
+def test_phase9_strategy_tables_are_upsertable(tmp_path):
+    con = init_ml_db(tmp_path / "ml.duckdb")
+    assert {
+        "trend_score",
+        "breadth_score",
+        "final_regime",
+    }.issubset(_columns(con, "ml_market_regime_daily"))
+    assert {
+        "model_or_bundle_id",
+        "rolling_20d_return",
+        "rolling_60d_drawdown",
+        "enabled_by_health",
+    }.issubset(_columns(con, "ml_model_health_daily"))
+    assert {
+        "sleeve",
+        "bundle_id",
+        "raw_weight",
+        "regime_multiplier",
+        "health_multiplier",
+        "drawdown_multiplier",
+        "final_weight",
+    }.issubset(_columns(con, "ml_strategy_allocation_daily"))
+
+    upsert_dataframe(
+        con,
+        "ml_market_regime_daily",
+        pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-06-12",
+                    "trend_score": 0.8,
+                    "breadth_score": 0.7,
+                    "sentiment_score": 0.6,
+                    "liquidity_score": 0.7,
+                    "volatility_score": 0.3,
+                    "final_regime": "risk_on",
+                    "generated_at": "t",
+                }
+            ]
+        ),
+        ["trade_date"],
+    )
+    upsert_dataframe(
+        con,
+        "ml_model_health_daily",
+        pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-06-12",
+                    "model_or_bundle_id": "core_bundle",
+                    "strategy_id": "holding_aware_v2",
+                    "score_version": "v2_absolute_risk_filter",
+                    "rolling_20d_return": 0.05,
+                    "rolling_60d_return": 0.12,
+                    "rolling_20d_drawdown": -0.03,
+                    "rolling_60d_drawdown": -0.08,
+                    "equity_above_ma60": True,
+                    "enabled_by_health": True,
+                    "reason": "healthy",
+                }
+            ]
+        ),
+        ["trade_date", "model_or_bundle_id", "strategy_id", "score_version"],
+    )
+    upsert_dataframe(
+        con,
+        "ml_strategy_allocation_daily",
+        pd.DataFrame(
+            [
+                {
+                    "trade_date": "2026-06-12",
+                    "strategy_id": "holding_aware_v2",
+                    "sleeve": "core",
+                    "bundle_id": "core_bundle",
+                    "score_version": "v2_absolute_risk_filter",
+                    "raw_weight": 0.55,
+                    "regime_multiplier": 1.0,
+                    "health_multiplier": 1.0,
+                    "drawdown_multiplier": 1.0,
+                    "final_weight": 0.55,
+                    "reason": "risk_on",
+                }
+            ]
+        ),
+        ["trade_date", "strategy_id", "sleeve", "bundle_id", "score_version"],
+    )
+
+    rows = con.execute("select count(*) from ml_strategy_allocation_daily").fetchone()
+    con.close()
+    assert rows == (1,)
 
 
 def test_run_tables_store_run_and_fold_metadata(tmp_path):

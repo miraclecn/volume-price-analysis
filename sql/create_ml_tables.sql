@@ -188,6 +188,48 @@ create table if not exists ml_model_bundles (
     notes varchar
 );
 
+create table if not exists ml_market_regime_daily (
+    trade_date varchar primary key,
+    trend_score double,
+    breadth_score double,
+    sentiment_score double,
+    liquidity_score double,
+    volatility_score double,
+    final_regime varchar,
+    generated_at varchar
+);
+
+create table if not exists ml_model_health_daily (
+    trade_date varchar not null,
+    model_or_bundle_id varchar not null,
+    strategy_id varchar,
+    score_version varchar,
+    rolling_20d_return double,
+    rolling_60d_return double,
+    rolling_20d_drawdown double,
+    rolling_60d_drawdown double,
+    equity_above_ma60 boolean,
+    enabled_by_health boolean,
+    reason varchar,
+    primary key (trade_date, model_or_bundle_id, strategy_id, score_version)
+);
+
+create table if not exists ml_strategy_allocation_daily (
+    trade_date varchar not null,
+    strategy_id varchar not null,
+    sleeve varchar not null,
+    bundle_id varchar,
+    score_version varchar,
+    raw_weight double,
+    regime_multiplier double,
+    health_multiplier double,
+    drawdown_multiplier double,
+    final_weight double,
+    reason varchar,
+    generated_at varchar,
+    primary key (trade_date, strategy_id, sleeve, bundle_id, score_version)
+);
+
 create table if not exists ml_predictions_daily (
     trade_date varchar not null,
     code varchar not null,
