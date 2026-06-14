@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 import pandas as pd
@@ -12,12 +13,16 @@ from ml_stock_selector.config import load_ml_config
 from ml_stock_selector.data_access import load_normalized_stock_bars
 from ml_stock_selector.portfolio.constructor import get_portfolio_diagnostics
 from ml_stock_selector.runtime.run_context import create_run_context, register_run_context, register_run_fold, update_run_status
+from ml_stock_selector.split.fold_generator import generate_experiment_folds
 from ml_stock_selector.storage import init_ml_db, upsert_dataframe
+
+STAGES = ["matrix", "models", "predictions", "portfolio", "backtest"]
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config/ml_default.toml")
+    parser.add_argument("--experiment-name")
     parser.add_argument("--ml-db")
     parser.add_argument("--run-id")
     parser.add_argument("--fold-id")
@@ -30,6 +35,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--label-base")
     parser.add_argument("--score-version", default="v2_three_model")
     parser.add_argument("--run-artifact-dir", default="outputs/ml/runs")
+    parser.add_argument("--from-stage", choices=STAGES, default="matrix")
+    parser.add_argument("--to-stage", choices=STAGES, default="backtest")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--generated-train-start", default="2015-01-05")
+    parser.add_argument("--generated-first-test-year", type=int)
+    parser.add_argument("--generated-last-test-year", type=int)
+    parser.add_argument("--generated-last-test-end")
     parser.add_argument("--batch-size", type=int, default=50000)
     parser.add_argument("--prediction-chunk-size", type=int, default=50000)
     parser.add_argument("--force", action="store_true")
@@ -40,8 +52,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_arg_parser()
     args = parser.parse_args()
+    validate_stage_range(args.from_stage, args.to_stage)
     config = load_ml_config(args.config)
     ml_db = args.ml_db or str(config.data["ml_db"])
+    selected = resolve_selected_folds(args, config.split.get("folds", []))
+    if not selected:
+        raise ValueError(f"Unknown fold_id: {args.fold_id}")
+    if args.dry_run:
+        print(
+            json.dumps(
+                {
+                    "config": args.config,
+                    "run_id": args.run_id,
+                    "experiment_name": args.experiment_name,
+                    "from_stage": args.from_stage,
+                    "to_stage": args.to_stage,
+                    "folds": selected,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+        )
+        return
     con = init_ml_db(ml_db)
     try:
         if args.use_feature_store:
@@ -51,13 +84,12 @@ def main() -> None:
             label_base = args.label_base or str(config.labels["label_base"])
             if not args.feature_store_dir or not args.feature_store_version:
                 raise ValueError("--feature-store-dir and --feature-store-version are required when --use-feature-store true")
-            selected = [fold for fold in config.split.get("folds", []) if args.fold_id is None or str(fold.get("fold_id")) == args.fold_id]
             if not selected:
                 raise ValueError(f"Unknown fold_id: {args.fold_id}")
             context = create_run_context(
                 run_type="walkforward",
                 run_id=run_id,
-                experiment_name="feature_store_walkforward",
+                experiment_name=args.experiment_name or "feature_store_walkforward",
                 config_path=args.config,
                 artifact_root=args.run_artifact_dir,
                 alpha_data_db=str(config.data["alpha_data_db"]),
@@ -103,11 +135,10 @@ def main() -> None:
             feature_set_id = args.feature_set_id or str(config.features["feature_set_id"])
             horizon_d = args.horizon_d or int(config.labels["main_horizon"])
             label_base = args.label_base or str(config.labels["label_base"])
-            selected = [fold for fold in config.split.get("folds", []) if args.fold_id is None or str(fold.get("fold_id")) == args.fold_id]
             context = create_run_context(
                 run_type="walkforward",
                 run_id=run_id,
-                experiment_name="legacy_json_walkforward",
+                experiment_name=args.experiment_name or "legacy_json_walkforward",
                 config_path=args.config,
                 artifact_root=args.run_artifact_dir,
                 alpha_data_db=str(config.data["alpha_data_db"]),
@@ -160,6 +191,31 @@ def main() -> None:
     finally:
         con.close()
     print(f"folds={len(results)}")
+
+
+def validate_stage_range(from_stage: str, to_stage: str) -> None:
+    if STAGES.index(from_stage) > STAGES.index(to_stage):
+        raise ValueError("from-stage must be earlier than or equal to to-stage")
+
+
+def resolve_selected_folds(args, config_folds: list[dict[str, object]]) -> list[dict[str, object]]:
+    if args.experiment_name in {"expanding_gap", "expanding_nogap", "rolling5_gap", "rolling5_nogap"} and (
+        args.generated_first_test_year is not None or args.generated_last_test_year is not None or not config_folds
+    ):
+        first_year = args.generated_first_test_year or 2020
+        last_year = args.generated_last_test_year or 2026
+        folds = generate_experiment_folds(
+            args.experiment_name,
+            train_start=args.generated_train_start,
+            first_test_year=first_year,
+            last_test_year=last_year,
+            last_test_end=args.generated_last_test_end,
+        )
+    else:
+        folds = list(config_folds)
+    if args.fold_id is not None:
+        folds = [fold for fold in folds if str(fold.get("fold_id")) == args.fold_id]
+    return folds
 
 
 def _annotate_targets(targets: pd.DataFrame, run_id: str, fold_id: str, score_version: str) -> pd.DataFrame:
