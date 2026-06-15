@@ -228,7 +228,7 @@ def run_live_sim_day(
     holdings = _load_holdings(con, config.account_id)
     nav = _record_nav(con, as_of_date, bars, config, holdings)
     execution_date = _next_trading_day(as_of_date, bars)
-    targets = _build_targets(predictions, holdings, config)
+    targets = _build_targets(predictions, holdings, config, as_of_date, _sim_trading_dates(con, config.account_id, as_of_date))
     planned = _plan_orders(con, as_of_date, execution_date, targets, holdings, bars, float(nav["nav"]), config)
     holdings_report = _annotate_holdings_for_report(holdings, bars, as_of_date)
     result = LiveSimDayResult(config.account_id, as_of_date, execution_date, planned, executions, holdings_report, nav)
@@ -281,12 +281,24 @@ def _ensure_account(con: duckdb.DuckDBPyConnection, config: LiveSimConfig) -> No
         )
 
 
-def _build_targets(predictions: pd.DataFrame, holdings: pd.DataFrame, config: LiveSimConfig) -> pd.DataFrame:
+def _build_targets(
+    predictions: pd.DataFrame,
+    holdings: pd.DataFrame,
+    config: LiveSimConfig,
+    as_of_date: str,
+    trading_dates: list[str] | None = None,
+) -> pd.DataFrame:
     scored = archived_adv_score(predictions)
     # Signal generation must not depend on next-open tradeability columns, which are future
     # information at T-day close. Settlement handles limits and pauses with actual T+1 bars.
     scored = scored.drop(columns=[col for col in ["can_buy_next_open", "can_sell_next_open"] if col in scored], errors="ignore")
-    targets = construct_portfolio_targets_v2(scored, config.constraints, config.portfolio_id, current_holdings=_holdings_for_constructor(holdings), score_version=SCORE_VERSION)
+    targets = construct_portfolio_targets_v2(
+        scored,
+        config.constraints,
+        config.portfolio_id,
+        current_holdings=_holdings_for_constructor(holdings, as_of_date, trading_dates),
+        score_version=SCORE_VERSION,
+    )
     if targets.empty:
         return targets
     weighted = allocate_weights(targets, 1.0 / config.target_positions, 1.0 / config.target_positions, allow_cash=True)
@@ -336,7 +348,14 @@ def _plan_orders(
     for code in sorted(current_codes | target_codes):
         target = target_by_code.get(code)
         target_weight = float(target.get("target_weight", 0.0)) if target is not None else 0.0
-        side = "buy" if code in target_codes and code not in current_codes else ("hold" if code in target_codes else "sell")
+        signal_action = str(_get(target, "signal_action") or "").lower() if target is not None else ""
+        side = (
+            "sell"
+            if signal_action == "sell" or code not in target_codes
+            else "buy"
+            if code not in current_codes
+            else "hold"
+        )
         if side == "hold":
             continue
         estimated_price = close_prices.get(code)
@@ -520,6 +539,23 @@ def _record_nav(
     return row
 
 
+def _sim_trading_dates(con: duckdb.DuckDBPyConnection, account_id: str, as_of_date: str) -> list[str]:
+    dates = con.execute(
+        """
+        select sim_date
+        from live_sim_nav
+        where account_id = ?
+          and sim_date <> 'INITIAL'
+          and sim_date <= ?
+        order by sim_date
+        """,
+        [account_id, as_of_date],
+    ).fetchdf()
+    values = {str(value)[:10] for value in dates["sim_date"].dropna().tolist()}
+    values.add(as_of_date)
+    return sorted(values)
+
+
 def _latest_cash(con: duckdb.DuckDBPyConnection, config: LiveSimConfig) -> float:
     cashflow = con.execute(
         """
@@ -639,14 +675,33 @@ def _next_trading_day(as_of_date: str, bars: pd.DataFrame) -> str:
     return day.isoformat()
 
 
-def _holdings_for_constructor(holdings: pd.DataFrame) -> pd.DataFrame:
+def _holdings_for_constructor(holdings: pd.DataFrame, as_of_date: str, trading_dates: list[str] | None = None) -> pd.DataFrame:
     if holdings.empty:
         return holdings
     out = holdings.rename(columns={"qty": "shares"}).copy()
-    out["holding_days"] = 0
-    out["calendar_days"] = 0
+    dates = trading_dates or [as_of_date]
+    out["holding_days"] = out["entry_date"].map(lambda value: _trading_days_held(value, as_of_date, dates))
+    out["calendar_days"] = out["entry_date"].map(lambda value: _calendar_days_held(value, as_of_date))
     out["latest_trade_score"] = out.get("entry_trade_score")
     return out
+
+
+def _trading_days_held(entry_date: object, as_of_date: str, trading_dates: list[str]) -> int:
+    start = pd.to_datetime(entry_date, errors="coerce")
+    end = pd.to_datetime(as_of_date, errors="coerce")
+    if pd.isna(start) or pd.isna(end) or end < start:
+        return 0
+    start_key = start.date().isoformat()
+    end_key = end.date().isoformat()
+    return sum(1 for date in trading_dates if start_key < str(date)[:10] <= end_key)
+
+
+def _calendar_days_held(entry_date: object, as_of_date: str) -> int:
+    start = pd.to_datetime(entry_date, errors="coerce")
+    end = pd.to_datetime(as_of_date, errors="coerce")
+    if pd.isna(start) or pd.isna(end) or end < start:
+        return 0
+    return int((end.date() - start.date()).days) + 1
 
 
 def _rows_by_code(frame: pd.DataFrame) -> dict[str, pd.Series]:

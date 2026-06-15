@@ -515,6 +515,44 @@ def test_portfolio_targets_are_run_and_score_scoped(tmp_path):
     assert rows == [("run_b", "v1", "b"), ("run_a", "v2", "c")]
 
 
+def test_portfolio_target_migration_backfills_legacy_scope_columns(tmp_path):
+    db_path = tmp_path / "legacy_ml.duckdb"
+    con = duckdb.connect(str(db_path))
+    con.execute(
+        """
+        create table ml_portfolio_targets_daily (
+            trade_date varchar not null,
+            portfolio_id varchar not null,
+            code varchar not null,
+            target_weight double,
+            run_id varchar,
+            fold_id varchar,
+            score_version varchar,
+            primary key (trade_date, portfolio_id, code)
+        )
+        """
+    )
+    con.execute(
+        """
+        insert into ml_portfolio_targets_daily
+        (trade_date, portfolio_id, code, target_weight, run_id, fold_id, score_version)
+        values ('2020-01-02', 'p1', 'a', 0.1, null, null, null)
+        """
+    )
+    con.close()
+
+    migrated = init_ml_db(db_path)
+    rows = migrated.execute(
+        """
+        select trade_date, portfolio_id, code, run_id, fold_id, score_version
+        from ml_portfolio_targets_daily
+        """
+    ).fetchall()
+    migrated.close()
+
+    assert rows == [("2020-01-02", "p1", "a", "legacy", "p1", "legacy")]
+
+
 def _columns(con, table_name: str) -> set[str]:
     return {
         row[0]

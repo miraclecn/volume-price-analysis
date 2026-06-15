@@ -237,6 +237,174 @@ def test_settlement_keeps_existing_holdings_not_in_due_plan(tmp_path: Path) -> N
     con.close()
 
 
+def test_live_sim_plans_sell_for_aged_holding_no_longer_in_candidate_pool(tmp_path: Path) -> None:
+    con = init_live_sim_db(tmp_path / "live.duckdb")
+    config = LiveSimConfig(
+        account_id="paper",
+        initial_cash=300_000.0,
+        portfolio_id="preferred",
+        target_positions=1,
+        report_dir=tmp_path / "reports",
+        execution=ExecutionConfig(allow_fractional_shares=False),
+        constraints=PortfolioConstraints(
+            target_positions=1,
+            hard_max_positions=2,
+            max_initial_entries=1,
+            max_new_entries_per_day=1,
+            min_adv20_amount=0.0,
+            candidate_min_trade_score=0.0,
+            core_min_trade_score=0.0,
+            candidate_absolute_min_rank_pct=0.0,
+            candidate_active_min_rank_pct=0.0,
+            candidate_risk_max_rank_pct=1.0,
+            core_absolute_min_rank_pct=0.0,
+            core_active_min_rank_pct=0.0,
+            core_risk_max_rank_pct=1.0,
+            holding_policy=HoldingPolicy(
+                min_hold_days=3,
+                target_hold_days=4,
+                max_hold_days=10,
+                sell_score_threshold=-1.0,
+                sell_if_not_candidate_after_target_days=True,
+            ),
+        ),
+    )
+    con.execute("insert into live_sim_account values ('paper', 300000, 'now')")
+    con.executemany(
+        "insert into live_sim_nav values ('paper', ?, 300000, 299000, 1000, 0, 0)",
+        [(date,) for date in ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08"]],
+    )
+    con.execute(
+        "insert into live_sim_holdings values ('paper', '000001.SZ', 100, '2024-01-02', 10, 0.8, 'core_pool', 'now')"
+    )
+    predictions = pd.DataFrame(
+        [
+            {
+                "trade_date": "2024-01-08",
+                "code": "000002.SZ",
+                "industry_code": "I2",
+                "industry_name": "Industry 2",
+                "is_st": False,
+                "is_paused": False,
+                "is_bse": False,
+                "adv20_amount": 20_000_000.0,
+                "absolute_rank_pct": 0.95,
+                "active_rank_pct": 0.90,
+                "risk_rank_pct": 0.10,
+            }
+        ]
+    )
+    bars = pd.DataFrame(
+        [
+            {
+                "trade_date": trade_date,
+                "code": code,
+                "open": 10.0,
+                "close": 10.0,
+                "limit_up": 11.0,
+                "limit_down": 9.0,
+                "is_paused": False,
+            }
+            for trade_date in ["2024-01-08", "2024-01-09"]
+            for code in ["000001.SZ", "000002.SZ"]
+        ]
+    )
+
+    result = run_live_sim_day(con, "2024-01-08", predictions, bars, config)
+
+    planned_sell = result.planned_orders[
+        (result.planned_orders["code"] == "000001.SZ")
+        & (result.planned_orders["side"] == "sell")
+    ]
+    assert len(planned_sell) == 1
+    assert planned_sell.iloc[0]["signal_action"] == "sell"
+    assert planned_sell.iloc[0]["estimated_qty"] == 100
+    con.close()
+
+
+def test_live_sim_holding_days_use_observed_trading_dates_not_weekdays(tmp_path: Path) -> None:
+    con = init_live_sim_db(tmp_path / "live.duckdb")
+    config = LiveSimConfig(
+        account_id="paper",
+        initial_cash=300_000.0,
+        portfolio_id="preferred",
+        target_positions=1,
+        report_dir=tmp_path / "reports",
+        execution=ExecutionConfig(allow_fractional_shares=False),
+        constraints=PortfolioConstraints(
+            target_positions=1,
+            hard_max_positions=2,
+            max_initial_entries=1,
+            max_new_entries_per_day=1,
+            min_adv20_amount=0.0,
+            candidate_min_trade_score=0.0,
+            core_min_trade_score=0.0,
+            candidate_absolute_min_rank_pct=0.0,
+            candidate_active_min_rank_pct=0.0,
+            candidate_risk_max_rank_pct=1.0,
+            core_absolute_min_rank_pct=0.0,
+            core_active_min_rank_pct=0.0,
+            core_risk_max_rank_pct=1.0,
+            holding_policy=HoldingPolicy(
+                min_hold_days=0,
+                target_hold_days=4,
+                max_hold_days=10,
+                sell_score_threshold=-1.0,
+                sell_if_not_candidate_after_target_days=True,
+            ),
+        ),
+    )
+    con.execute("insert into live_sim_account values ('paper', 300000, 'now')")
+    con.executemany(
+        "insert into live_sim_nav values ('paper', ?, 300000, 299000, 1000, 0, 0)",
+        [(date,) for date in ["2024-01-02", "2024-01-03", "2024-01-05", "2024-01-08"]],
+    )
+    con.execute(
+        "insert into live_sim_holdings values ('paper', '000001.SZ', 100, '2024-01-02', 10, 0.8, 'core_pool', 'now')"
+    )
+    predictions = pd.DataFrame(
+        [
+            {
+                "trade_date": "2024-01-08",
+                "code": "000002.SZ",
+                "industry_code": "I2",
+                "industry_name": "Industry 2",
+                "is_st": False,
+                "is_paused": False,
+                "is_bse": False,
+                "adv20_amount": 20_000_000.0,
+                "absolute_rank_pct": 0.95,
+                "active_rank_pct": 0.90,
+                "risk_rank_pct": 0.10,
+            }
+        ]
+    )
+    bars = pd.DataFrame(
+        [
+            {
+                "trade_date": trade_date,
+                "code": code,
+                "open": 10.0,
+                "close": 10.0,
+                "limit_up": 11.0,
+                "limit_down": 9.0,
+                "is_paused": False,
+            }
+            for trade_date in ["2024-01-08", "2024-01-09"]
+            for code in ["000001.SZ", "000002.SZ"]
+        ]
+    )
+
+    result = run_live_sim_day(con, "2024-01-08", predictions, bars, config)
+
+    if not result.planned_orders.empty:
+        assert not (
+            (result.planned_orders["code"] == "000001.SZ")
+            & (result.planned_orders["side"] == "sell")
+        ).any()
+    con.close()
+
+
 def _prediction_frame(trade_date: str) -> pd.DataFrame:
     return pd.DataFrame(
         [

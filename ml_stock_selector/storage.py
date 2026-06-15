@@ -393,7 +393,18 @@ def _migrate_portfolio_targets_table(con: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
-    con.execute(f"insert into {temp_name} by name select * from ml_portfolio_targets_daily")
+    con.execute(
+        f"""
+        insert into {temp_name} by name
+        select
+            * replace (
+                coalesce(run_id, 'legacy') as run_id,
+                coalesce(fold_id, portfolio_id, 'legacy') as fold_id,
+                coalesce(score_version, 'legacy') as score_version
+            )
+        from ml_portfolio_targets_daily
+        """
+    )
     con.execute("drop table ml_portfolio_targets_daily")
     con.execute(f"alter table {temp_name} rename to ml_portfolio_targets_daily")
 
