@@ -16,6 +16,9 @@ TRADEABILITY_COLUMNS = [
     "next_limit_up",
     "next_limit_down",
     "next_is_paused",
+    "limit_up_pct",
+    "limit_down_pct",
+    "limit_band",
 ]
 
 
@@ -52,7 +55,10 @@ def load_backtest_candidates(
             t.next_open,
             t.next_limit_up,
             t.next_limit_down,
-            t.next_is_paused
+            t.next_is_paused,
+            t.limit_up_pct,
+            t.limit_down_pct,
+            t.limit_band
         from ml_predictions_daily p
         left join ml_tradeability_daily t
           on p.trade_date = t.trade_date and p.code = t.code

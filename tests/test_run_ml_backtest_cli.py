@@ -3,18 +3,24 @@ from __future__ import annotations
 import pandas as pd
 
 from scripts.run_ml_backtest import (
+    SCORE_VERSION_LIVE_ADV_PARITY,
     SCORE_VERSION_ABSOLUTE_RISK_SORT,
     SCORE_VERSION_ABSOLUTE_RISK_FILTER,
     SCORE_VERSION_ABSOLUTE_ONLY,
     SCORE_VERSION_THREE_MODEL,
     STRATEGY_FIXED_5D_RISK_FILTER,
+    STRATEGY_LIVE_SIM_PARITY,
     _backtest_identity,
     _apply_score_mode,
     _apply_constraint_overrides,
+    _execution_config_for_mode,
+    _initial_cash_for_mode,
     _portfolio_id_for_mode,
     _score_version_for_mode,
+    _weight_bounds_for_mode,
     build_arg_parser,
 )
+from ml_stock_selector.config import load_ml_config
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints
 
 
@@ -101,6 +107,31 @@ def test_absolute_risk_sort_score_mode_scores_with_absolute_and_risk_without_fil
     assert _portfolio_id_for_mode("wf_2022", "absolute_risk_sort") == "wf_2022_absolute_risk_sort"
 
 
+def test_live_adv_score_mode_matches_live_sim_formula_and_removes_future_tradeability():
+    scored = pd.DataFrame(
+        {
+            "trade_date": ["2024-01-02", "2024-01-02", "2024-01-02"],
+            "code": ["a", "b", "c"],
+            "absolute_rank_pct": [0.90, 0.80, 0.70],
+            "active_rank_pct": [0.10, 0.20, 0.30],
+            "adv20_amount": [10.0, 20.0, 30.0],
+            "can_buy_next_open": [False, True, True],
+            "can_sell_next_open": [False, True, True],
+        }
+    )
+
+    adjusted = _apply_score_mode(scored, "live_adv")
+
+    assert "can_buy_next_open" not in adjusted
+    assert "can_sell_next_open" not in adjusted
+    first = adjusted.loc[adjusted["code"] == "a"].iloc[0]
+    assert first["full_prediction_pool_adv_pct"] == 1 / 3
+    assert first["trade_score_v2"] == 0.85 * 0.90 + 0.15 * (1 - 1 / 3)
+    assert first["active_rank_pct"] == 0.90
+    assert first["risk_rank_pct"] == 0.0
+    assert adjusted["score_version"].eq(SCORE_VERSION_LIVE_ADV_PARITY).all()
+
+
 def test_three_model_score_mode_leaves_scores_unchanged():
     scored = pd.DataFrame({"absolute_rank_pct": [0.9], "trade_score_v2": [0.7]})
 
@@ -139,6 +170,28 @@ def test_backtest_cli_accepts_risk_threshold_overrides_and_portfolio_suffix():
     assert _portfolio_id_for_mode(args.fold_id, args.score_mode, args.portfolio_suffix) == (
         "wf_2021_absolute_risk_filter_risk055_045"
     )
+
+
+def test_backtest_cli_accepts_separate_prediction_source_identity():
+    args = build_arg_parser().parse_args(
+        [
+            "--run-id",
+            "bt_live_adv",
+            "--fold-id",
+            "wf_2026_ytd",
+            "--prediction-run-id",
+            "wf_training",
+            "--prediction-fold-id",
+            "wf_2026_ytd",
+            "--prediction-score-version",
+            "v2_three_model_training",
+        ]
+    )
+
+    assert args.run_id == "bt_live_adv"
+    assert args.prediction_run_id == "wf_training"
+    assert args.prediction_fold_id == "wf_2026_ytd"
+    assert args.prediction_score_version == "v2_three_model_training"
 
 
 def test_target_position_override_expands_matching_position_caps():
@@ -218,3 +271,42 @@ def test_fixed_horizon_identity_uses_original_fold_and_strategy_score_version():
     assert identity.strategy_id == STRATEGY_FIXED_5D_RISK_FILTER
     assert identity.score_version == STRATEGY_FIXED_5D_RISK_FILTER
     assert identity.portfolio_id == f"wf_2025_{STRATEGY_FIXED_5D_RISK_FILTER}"
+
+
+def test_live_adv_identity_uses_live_sim_strategy_portfolio_and_score_version():
+    args = build_arg_parser().parse_args(
+        [
+            "--run-id",
+            "run_202606",
+            "--fold-id",
+            "wf_2025",
+            "--score-mode",
+            "live_adv",
+        ]
+    )
+
+    identity = _backtest_identity(args)
+
+    assert identity.run_id == "run_202606"
+    assert identity.fold_id == "wf_2025"
+    assert identity.strategy_id == STRATEGY_LIVE_SIM_PARITY
+    assert identity.score_version == SCORE_VERSION_LIVE_ADV_PARITY
+    assert identity.portfolio_id == f"preferred_adv10m_fulladv015_top12_{STRATEGY_LIVE_SIM_PARITY}"
+    assert _score_version_for_mode("live_adv") == SCORE_VERSION_LIVE_ADV_PARITY
+
+
+def test_live_adv_mode_uses_live_sim_cash_execution_and_equal_weights():
+    config = load_ml_config("config/ml_walkforward_adv10m.toml")
+    constraints = PortfolioConstraints(target_positions=12)
+
+    execution = _execution_config_for_mode(config, "live_adv")
+    min_weight, max_weight, allow_cash = _weight_bounds_for_mode(config, constraints, "live_adv")
+
+    assert _initial_cash_for_mode(config, "live_adv") == 300_000.0
+    assert _initial_cash_for_mode(config, "live_adv", 1_000_000.0) == 1_000_000.0
+    assert execution.allow_fractional_shares is False
+    assert execution.slippage_bps == 5.0
+    assert execution.commission_bps == 3.0
+    assert execution.stamp_duty_bps == 5.0
+    assert min_weight == max_weight == 1 / 12
+    assert allow_cash is True

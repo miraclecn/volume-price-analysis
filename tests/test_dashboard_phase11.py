@@ -32,18 +32,10 @@ from ml_stock_selector.serving.live_sim import init_live_sim_db
 def test_dashboard_phase11_pages_exist_and_are_read_only():
     expected = [
         "dashboard/app.py",
-        "dashboard/pages/1_Run_Registry.py",
-        "dashboard/pages/2_Walkforward_Compare.py",
-        "dashboard/pages/3_Score_Mode_Compare.py",
-        "dashboard/pages/4_Fixed_Horizon_Compare.py",
-        "dashboard/pages/5_Fold_Detail.py",
-        "dashboard/pages/6_Model_Bundle.py",
-        "dashboard/pages/7_Portfolio_Diagnostics.py",
-        "dashboard/pages/8_Signal_Preview.py",
-        "dashboard/pages/9_Live_Monitor.py",
-        "dashboard/pages/10_Data_Health.py",
-        "dashboard/pages/11_Continuous_Curve.py",
-        "dashboard/pages/12_Live_Sim.py",
+        "dashboard/pages/1_Strategy_Research.py",
+        "dashboard/pages/2_Model_Training.py",
+        "dashboard/pages/3_Live_Sim_Monitor.py",
+        "dashboard/pages/4_Data_Health.py",
     ]
     for path in expected:
         file_path = Path(path)
@@ -474,29 +466,63 @@ def test_dashboard_live_sim_queries_return_nav_drawdown_and_order_summary(tmp_pa
         con.close()
 
 
-def test_dashboard_main_is_run_centric_visual_workspace():
+def test_dashboard_main_is_active_strategy_workspace():
     text = Path("dashboard/app.py").read_text(encoding="utf-8")
-    assert "render_run_dashboard" in text
-    assert "Continuous Curve" in text
-    assert "continuous_nav" in text
+    assert "mkt_tier_profit_protect" in text
+    assert "current_strategy_config" in text
+    assert "current_strategy_report" in text
+    assert "Active Live Sim" in text
     assert "selectbox" in text
     assert "line_chart" in text
-    assert "bar_chart" in text
 
 
-def test_dashboard_has_dedicated_continuous_curve_page():
-    text = Path("dashboard/pages/11_Continuous_Curve.py").read_text(encoding="utf-8")
-    assert "Continuous Curve" in text
-    assert "continuous_nav" in text
-    assert "Start Year" in text
-    assert "End Year" in text
+def test_dashboard_has_dedicated_strategy_research_page():
+    text = Path("dashboard/pages/1_Strategy_Research.py").read_text(encoding="utf-8")
+    assert "Strategy Research" in text
+    assert "current_strategy_report" in text
+    assert "Exit Attribution" in text
+    assert "Sharpe" in text
 
 
-def test_dashboard_has_dedicated_live_sim_page():
-    text = Path("dashboard/pages/12_Live_Sim.py").read_text(encoding="utf-8")
-    assert "Live Sim" in text
+def test_dashboard_has_dedicated_model_training_page():
+    text = Path("dashboard/pages/2_Model_Training.py").read_text(encoding="utf-8")
+    assert "Model Training" in text
+    assert "current_strategy_model_summary" in text
+    assert "fixed_round_full_history" in text
+
+
+def test_dashboard_has_dedicated_live_sim_monitor_page():
+    text = Path("dashboard/pages/3_Live_Sim_Monitor.py").read_text(encoding="utf-8")
+    assert "Live Sim Monitor" in text
+    assert "DEFAULT_LIVE_SIM_DB" in text
     assert "live_sim_nav" in text
     assert "line_chart" in text
+
+
+def test_dashboard_defaults_to_current_research_and_live_sim_databases():
+    text = Path("dashboard/ui.py").read_text(encoding="utf-8")
+    assert "VPA_DASHBOARD_ML_DB" in text
+    assert "outputs/ml/ml_ret5_alpha_risk_20260619.duckdb" in text
+    assert "VPA_DASHBOARD_LIVE_SIM_DB" in text
+    assert "outputs/ml/live_sim/live_sim_state.duckdb" in text
+
+
+def test_dashboard_live_monitor_uses_new_live_sim_state_database():
+    text = Path("dashboard/pages/3_Live_Sim_Monitor.py").read_text(encoding="utf-8")
+    assert "DEFAULT_LIVE_SIM_DB" in text
+    assert "live_sim_accounts" in text
+    assert "live_sim_nav" in text
+    assert "live_sim_order_summary" in text
+    assert "live_target_positions" not in text
+    assert "live_orders" not in text
+    assert "live_fills" not in text
+
+
+def test_dashboard_home_surfaces_active_live_sim_summary():
+    text = Path("dashboard/app.py").read_text(encoding="utf-8")
+    assert "Active Live Sim" in text
+    assert "DEFAULT_LIVE_SIM_DB" in text
+    assert "profit_protect_paper" in text
 
 
 def test_dashboard_queries_tolerate_uninitialized_database():

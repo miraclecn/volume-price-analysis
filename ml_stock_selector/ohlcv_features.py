@@ -24,12 +24,11 @@ def build_ohlcv_features(normalized_bars: pd.DataFrame, windows: list[int]) -> p
             g[f"amount_ratio_{window}d"] = g["amount"] / rolling_amount
             g[f"volume_ratio_{window}d"] = g["volume"] / rolling_volume
             g[f"turnover_mean_{window}d"] = g["turnover_rate"].rolling(window, min_periods=1).mean()
-            high_n = g["high"].rolling(window, min_periods=1).max()
-            low_n = g["low"].rolling(window, min_periods=1).min()
+            high_n = g["high"].rolling(window, min_periods=1).max().shift(1)
+            low_n = g["low"].rolling(window, min_periods=1).min().shift(1)
             g[f"high_distance_{window}d"] = g["close"] / high_n - 1.0
             g[f"low_distance_{window}d"] = g["close"] / low_n - 1.0
         g["code"] = code
         rows.append(g)
     out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     return out.astype(object).where(pd.notna(out), None)
-

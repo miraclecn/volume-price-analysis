@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from ml_stock_selector.constants import (
     FEATURE_SET_BASELINE_A,
     FEATURE_SET_VPA_D,
@@ -76,5 +78,29 @@ def test_feature_mart_v2_excludes_industry_from_features_json(tmp_path):
     assert "industry_code" not in features
     assert "industry_name" not in features
     assert "industry_unknown" not in features
+    assert "limit_band" not in features
     assert {"industry_code", "industry_name"}.issubset(mart.columns)
+    assert {"limit_up_pct", "limit_down_pct", "limit_band"}.issubset(mart.columns)
     assert mart["industry_code"].notna().any()
+
+
+def test_feature_mart_uses_warmup_bars_for_ohlcv_features(tmp_path):
+    vpa_db = create_vpa_db(tmp_path / "vpa.duckdb")
+    bars = normalized_bars()
+    tradeability = build_tradeability_mart(bars)
+
+    mart = build_feature_mart(
+        str(vpa_db),
+        bars,
+        "2024-01-03",
+        "2024-01-08",
+        FEATURE_SET_BASELINE_A,
+        [2],
+        tradeability,
+        exclude_industry_metadata_from_features_json=True,
+    )
+
+    row = mart[(mart["code"] == "000001.SZ") & (mart["trade_date"] == "2024-01-03")].iloc[0]
+    features = json.loads(row["features_json"])
+    assert features["ret_1d"] == pytest.approx(10.2 / 10.0 - 1.0)
+    assert features["high_distance_2d"] == pytest.approx(10.2 / 10.2 - 1.0)

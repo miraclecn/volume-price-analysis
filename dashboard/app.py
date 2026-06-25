@@ -5,255 +5,255 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import duckdb
 import pandas as pd
 
-from dashboard.queries import (
-    backtest_nav,
-    continuous_nav,
-    continuous_variant_options,
-    data_health_summary,
-    fold_metric_matrix,
-    model_bundle_summary,
-    run_dimensions,
-    run_folds,
-    run_metadata,
-    selection_options,
-    signal_preview,
+from dashboard.queries import live_sim_accounts, live_sim_nav, live_sim_order_summary
+from dashboard.strategy_data import (
+    current_strategy_config,
+    current_strategy_model_summary,
+    current_strategy_report,
+    strategy_report_paths,
 )
-from dashboard.ui import DEFAULT_DB, connect, get_streamlit
+from dashboard.ui import DEFAULT_DB, DEFAULT_LIVE_SIM_DB, get_streamlit
 
 
 def main() -> None:
     st = get_streamlit()
     if st is None:
-        print("VPA ML Dashboard: install streamlit to view dashboard UI")
+        print("VPA Dashboard: install streamlit to view dashboard UI")
         return
 
-    st.set_page_config(page_title="VPA ML Dashboard", layout="wide")
-    con = connect(DEFAULT_DB)
+    st.set_page_config(page_title="VPA Strategy Dashboard", layout="wide")
+    _style(st)
+    render_dashboard(st)
+
+
+def render_dashboard(st) -> None:
+    config = current_strategy_config()
+    report = current_strategy_report()
+    models = current_strategy_model_summary()
+
+    st.title("VPA Strategy Dashboard")
+    st.caption(f"Read-only sources: ML={DEFAULT_DB} | live={DEFAULT_LIVE_SIM_DB}")
+
+    account_id = _render_live_summary(st)
+    st.divider()
+
+    st.subheader("Current Strategy")
+    summary = report.summary.iloc[0] if not report.summary.empty else pd.Series(dtype=object)
+    cols = st.columns(6)
+    cols[0].metric("Strategy", "mkt_tier_profit_protect")
+    cols[1].metric("Total Return", _fmt_pct(summary.get("total_return")))
+    cols[2].metric("Annual Return", _fmt_pct(summary.get("annual_return")))
+    cols[3].metric("Max Drawdown", _fmt_pct(summary.get("max_drawdown")))
+    cols[4].metric("Sharpe", _fmt_float(summary.get("sharpe")))
+    cols[5].metric("Calmar", _fmt_float(summary.get("calmar")))
+
+    selected_view = st.selectbox("Overview Section", ["Backtest Curve", "Risk Controls", "Model Snapshot"])
+    if selected_view == "Backtest Curve":
+        _render_backtest_snapshot(st, report)
+    elif selected_view == "Risk Controls":
+        _render_risk_controls(st, config)
+    else:
+        _render_model_snapshot(st, models)
+
+    st.caption(
+        f"Active account: {account_id or ''} | report dir: {strategy_report_paths()['report_dir']} | "
+        "Dashboard is read-only and does not trigger training or orders."
+    )
+
+
+def _render_live_summary(st) -> str | None:
+    st.subheader("Active Live Sim")
+    db_path = Path(DEFAULT_LIVE_SIM_DB)
+    if not db_path.exists():
+        st.warning(f"Live sim state database not found: {DEFAULT_LIVE_SIM_DB}")
+        return None
+
+    con = duckdb.connect(str(db_path), read_only=True)
     try:
-        render_run_dashboard(st, con)
+        accounts = live_sim_accounts(con)
+        if accounts.empty:
+            st.info("No live simulation accounts found.")
+            return None
+        account_values = accounts["account_id"].tolist()
+        default_index = account_values.index("profit_protect_paper") if "profit_protect_paper" in account_values else 0
+        account_id = st.sidebar.selectbox("Live Account", account_values, index=default_index)
+        nav = live_sim_nav(con, account_id)
+        orders = live_sim_order_summary(con, account_id)
+        nav = nav[nav["sim_date"] != "INITIAL"].copy() if not nav.empty else nav
+        if nav.empty:
+            st.info("Selected live simulation account has no NAV rows.")
+            return account_id
+        latest = nav.iloc[-1]
+        position_count = _safe_scalar(
+            con,
+            "select count(*) from live_sim_holdings where account_id = ? and qty > 0",
+            [account_id],
+        )
+        latest_plan_date = _safe_scalar(
+            con,
+            "select max(decision_date) from live_sim_planned_orders where account_id = ?",
+            [account_id],
+        )
+        latest_plan_count = _safe_scalar(
+            con,
+            """
+            select count(*)
+            from live_sim_planned_orders
+            where account_id = ?
+              and status = 'planned'
+              and decision_date = (
+                  select max(decision_date)
+                  from live_sim_planned_orders
+                  where account_id = ?
+              )
+            """,
+            [account_id, account_id],
+        )
+        cols = st.columns(6)
+        cols[0].metric("Account", account_id)
+        cols[1].metric("Latest Date", str(latest["sim_date"]))
+        cols[2].metric("NAV", f"{float(latest['nav']):,.0f}")
+        cols[3].metric("Return", _fmt_pct(latest["total_return"]))
+        cols[4].metric("Drawdown", _fmt_pct(latest["drawdown"]))
+        cols[5].metric("Positions / Latest Plans", f"{int(position_count or 0)} / {int(latest_plan_count or 0)}")
+        st.caption(f"Latest plan date: {latest_plan_date or ''}")
+        if not orders.empty:
+            st.dataframe(orders.tail(5).sort_values("sim_date", ascending=False), width="stretch", hide_index=True)
+        return account_id
     finally:
         con.close()
 
 
-def render_run_dashboard(st, con) -> None:
+def _render_backtest_snapshot(st, report) -> None:
+    if report.nav.empty:
+        st.info("No continuous backtest NAV report found.")
+        return
+    left, right = st.columns([1.4, 1])
+    with left:
+        st.subheader("Backtest Curve")
+        st.line_chart(report.nav.set_index("sim_date")["nav"])
+    with right:
+        st.subheader("Drawdown")
+        st.line_chart(report.nav.set_index("sim_date")["drawdown"])
+
+    st.subheader("Yearly Metrics")
+    columns = [
+        "year",
+        "total_return",
+        "max_drawdown",
+        "avg_exposure",
+        "trade_count",
+        "win_rate",
+        "loss_to_win",
+        "profit_factor",
+        "calmar",
+    ]
+    st.dataframe(_existing_columns(report.yearly, columns), width="stretch", hide_index=True)
+
+
+def _render_risk_controls(st, config: dict[str, object]) -> None:
+    constraints = dict(config.get("constraints") or {})
+    holding_policy = dict(constraints.get("holding_policy") or {})
+    execution = dict(config.get("execution") or {})
+    rows = [
+        ("target_positions", constraints.get("target_positions")),
+        ("hard_max_positions", constraints.get("hard_max_positions")),
+        ("max_initial_entries", constraints.get("max_initial_entries")),
+        ("max_new_entries_per_day", constraints.get("max_new_entries_per_day")),
+        ("min_adv20_amount", constraints.get("min_adv20_amount")),
+        ("candidate_min_trade_score", constraints.get("candidate_min_trade_score")),
+        ("candidate_absolute_min_rank_pct", constraints.get("candidate_absolute_min_rank_pct")),
+        ("candidate_risk_max_rank_pct", constraints.get("candidate_risk_max_rank_pct")),
+        ("core_risk_max_rank_pct", constraints.get("core_risk_max_rank_pct")),
+        ("risk_exit_rank_pct", holding_policy.get("risk_exit_rank_pct")),
+        ("risk_exit_prob", holding_policy.get("risk_exit_prob")),
+        ("score_exit_threshold", holding_policy.get("sell_score_threshold")),
+        ("target_hold_days", holding_policy.get("target_hold_days")),
+        ("max_hold_days", holding_policy.get("max_hold_days")),
+        ("profit_protect_min_days", config.get("profit_protect_min_days")),
+        ("profit_protect_min_gain", config.get("profit_protect_min_gain")),
+        ("profit_protect_exit_below", config.get("profit_protect_exit_below")),
+        ("market_zero_below", config.get("market_zero_below")),
+        ("market_half_below", config.get("market_half_below")),
+        ("slippage_bps", execution.get("slippage_bps")),
+        ("commission_bps", execution.get("commission_bps")),
+        ("stamp_duty_bps", execution.get("stamp_duty_bps")),
+    ]
+    st.dataframe(pd.DataFrame(rows, columns=["parameter", "value"]), width="stretch", hide_index=True)
+
+
+def _render_model_snapshot(st, models: pd.DataFrame) -> None:
+    if models.empty:
+        st.info("No fixed-round model manifests found.")
+        return
+    cols = st.columns(4)
+    cols[0].metric("Run ID", str(models["run_id"].dropna().iloc[0]))
+    cols[1].metric("Folds", str(models["fold_id"].nunique()))
+    cols[2].metric("Alpha Rounds", "160")
+    cols[3].metric("Risk Rounds", "120")
+    st.dataframe(
+        _existing_columns(
+            models,
+            [
+                "fold_id",
+                "model_role",
+                "model_id",
+                "objective",
+                "n_estimators",
+                "train_start",
+                "train_end",
+                "test_start",
+                "test_end",
+                "train_rows",
+                "feature_set_id",
+            ],
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+
+def _existing_columns(frame: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    return frame[[column for column in columns if column in frame.columns]].copy()
+
+
+def _safe_scalar(con, sql: str, params: list[object] | None = None) -> object | None:
+    try:
+        row = con.execute(sql, params or []).fetchone()
+        return row[0] if row else None
+    except (duckdb.CatalogException, duckdb.BinderException):
+        return None
+
+
+def _fmt_pct(value: object) -> str:
+    try:
+        return f"{float(value):.2%}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _fmt_float(value: object) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return ""
+
+
+def _style(st) -> None:
     st.markdown(
         """
         <style>
-        .block-container {padding-top: 1.25rem; padding-bottom: 2rem;}
-        [data-testid="stMetric"] {border: 1px solid #d8dde6; border-radius: 6px; padding: 0.7rem 0.8rem; background: #fafbfc;}
+        .block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
+        [data-testid="stMetric"] {border: 1px solid #d8dde6; border-radius: 6px; padding: 0.65rem 0.75rem; background: #fbfcfd;}
         [data-testid="stSidebar"] {border-right: 1px solid #d8dde6;}
         h1, h2, h3 {letter-spacing: 0;}
         </style>
         """,
         unsafe_allow_html=True,
     )
-    st.title("VPA ML Research Dashboard")
-    st.caption(f"Read-only DuckDB source: {DEFAULT_DB}")
-
-    runs = run_dimensions(con)
-    if runs.empty:
-        st.warning("No ml_runs found. Run a walk-forward or production train first, then refresh this dashboard.")
-        health = data_health_summary(con)
-        st.subheader("Data Health")
-        st.json(health)
-        return
-
-    variants = continuous_variant_options(con, start_year=2020, end_year=2025)
-    default_run = str(variants.iloc[0]["run_id"]) if not variants.empty else str(runs.iloc[0]["run_id"])
-    run_ids = runs["run_id"].tolist()
-    run_index = run_ids.index(default_run) if default_run in run_ids else 0
-    selected_run = st.sidebar.selectbox("Run", run_ids, index=run_index)
-    options = selection_options(con, selected_run)
-    selected_fold = _optional_selectbox(st, "Fold", _option_values(options, "fold_id"))
-    selected_strategy = _optional_selectbox(st, "Strategy", _option_values(options, "strategy_id"))
-    selected_score = _optional_selectbox(st, "Score Version", _option_values(options, "score_version"))
-
-    metadata = run_metadata(con, selected_run)
-    metrics = fold_metric_matrix(
-        con,
-        run_id=selected_run,
-        fold_id=selected_fold,
-        strategy_id=selected_strategy,
-        score_version=selected_score,
-    )
-    nav = backtest_nav(
-        con,
-        run_id=selected_run,
-        fold_id=selected_fold,
-        strategy_id=selected_strategy,
-        score_version=selected_score,
-    )
-
-    _render_run_header(st, metadata, metrics)
-    left, right = st.columns([1.5, 1])
-    with left:
-        st.subheader("NAV")
-        if nav.empty:
-            st.info("No NAV rows for the selected dimensions.")
-        else:
-            nav_chart = _series_frame(nav, "nav")
-            st.line_chart(nav_chart)
-    with right:
-        st.subheader("Drawdown")
-        drawdown = _drawdown_frame(nav)
-        if drawdown.empty:
-            st.info("No drawdown data for the selected dimensions.")
-        else:
-            st.line_chart(drawdown)
-
-    st.subheader("Fold Metrics")
-    if metrics.empty:
-        st.info("No fold metrics for the selected dimensions.")
-    else:
-        chart_metrics = metrics.set_index("fold_id")[["annual_return", "max_drawdown"]]
-        st.bar_chart(chart_metrics)
-        st.dataframe(metrics, width="stretch", hide_index=True)
-
-    _render_continuous_curve(st, con, selected_run, selected_strategy, selected_score)
-    _render_lineage(st, con, selected_run)
-
-
-def _render_run_header(st, metadata: pd.DataFrame, metrics: pd.DataFrame) -> None:
-    meta = metadata.iloc[0].to_dict() if not metadata.empty else {}
-    st.subheader(meta.get("experiment_name") or "Run Overview")
-    cols = st.columns(5)
-    cols[0].metric("Status", meta.get("status") or "")
-    cols[1].metric("Folds", _metric_count(metrics, "fold_id"))
-    cols[2].metric("Mean Return", _metric_mean(metrics, "annual_return", "{:.2%}"))
-    cols[3].metric("Worst Drawdown", _metric_min(metrics, "max_drawdown", "{:.2%}"))
-    cols[4].metric("Mean Calmar", _metric_mean(metrics, "calmar_like", "{:.2f}"))
-
-    summary = {
-        "run_id": meta.get("run_id", ""),
-        "run_type": meta.get("run_type", ""),
-        "feature_set_id": meta.get("feature_set_id", ""),
-        "label_version": meta.get("label_version", ""),
-        "score_version": meta.get("score_version", ""),
-        "config_hash": meta.get("config_hash", ""),
-        "git_commit": meta.get("git_commit", ""),
-        "artifact_root": meta.get("artifact_root", ""),
-    }
-    st.dataframe(pd.DataFrame([summary]), width="stretch", hide_index=True)
-
-
-def _render_lineage(st, con, run_id: str) -> None:
-    folds = run_folds(con, run_id)
-    bundles = model_bundle_summary(con)
-    if not bundles.empty:
-        bundles = bundles[bundles["run_id"] == run_id]
-    signals = signal_preview(con)
-
-    tab_folds, tab_bundles, tab_signals = st.tabs(["Folds", "Model Bundles", "Latest Signals"])
-    with tab_folds:
-        st.dataframe(folds, width="stretch", hide_index=True)
-    with tab_bundles:
-        st.dataframe(bundles, width="stretch", hide_index=True)
-    with tab_signals:
-        if not signals.empty and "source_bundle_id" in signals and not bundles.empty:
-            bundle_ids = set(bundles["bundle_id"].dropna())
-            signals = signals[signals["source_bundle_id"].isin(bundle_ids)]
-        if not signals.empty and "source_sleeve" in signals:
-            sleeve_weight = signals.groupby("source_sleeve", dropna=False)["target_weight"].sum().sort_values(ascending=False)
-            st.bar_chart(sleeve_weight)
-        st.dataframe(signals, width="stretch", hide_index=True)
-
-
-def _render_continuous_curve(st, con, run_id: str, strategy_id: str | None, score_version: str | None) -> None:
-    st.subheader("Continuous Curve")
-    cols = st.columns([1, 1, 3])
-    start_year = cols[0].number_input("Start Year", min_value=2000, max_value=2100, value=2020, step=1)
-    end_year = cols[1].number_input("End Year", min_value=2000, max_value=2100, value=2025, step=1)
-    variants = continuous_variant_options(con, run_id=run_id, start_year=int(start_year), end_year=int(end_year))
-    fold_suffix = str(variants.iloc[0]["fold_suffix"]) if not variants.empty else None
-    variant_score_version = str(variants.iloc[0]["score_version"]) if not variants.empty and pd.notna(variants.iloc[0]["score_version"]) else score_version
-    stitched = continuous_nav(
-        con,
-        run_id=run_id,
-        start_year=int(start_year),
-        end_year=int(end_year),
-        fold_suffix=fold_suffix,
-        strategy_id=strategy_id,
-        score_version=variant_score_version,
-    )
-    if stitched.empty:
-        cols[2].info("No exact yearly folds found for the selected range. Expected fold IDs like wf_2020, wf_2021, ...")
-        return
-
-    stats = st.columns(4)
-    total_return = stitched["continuous_nav"].iloc[-1] / stitched["continuous_nav"].iloc[0] - 1.0
-    stats[0].metric("Total Return", f"{total_return:.2%}")
-    stats[1].metric("Max Drawdown", f"{stitched['drawdown'].min():.2%}")
-    stats[2].metric("Start NAV", f"{stitched['continuous_nav'].iloc[0]:,.0f}")
-    stats[3].metric("End NAV", f"{stitched['continuous_nav'].iloc[-1]:,.0f}")
-    st.caption(f"Fold variant: {fold_suffix or 'Base wf_YYYY'} | Score version: {variant_score_version or 'table default'}")
-
-    left, right = st.columns([1.5, 1])
-    with left:
-        st.line_chart(stitched.set_index("sim_date")["continuous_nav"])
-    with right:
-        st.line_chart(stitched.set_index("sim_date")["drawdown"])
-
-    annual = stitched.assign(year=stitched["sim_date"].str.slice(0, 4))
-    annual_summary = annual.groupby("year", as_index=False).agg(
-        fold_id=("fold_id", "first"),
-        start_nav=("continuous_nav", "first"),
-        end_nav=("continuous_nav", "last"),
-        max_drawdown=("drawdown", "min"),
-    )
-    annual_summary["annual_return"] = annual_summary["end_nav"] / annual_summary["start_nav"] - 1.0
-    st.dataframe(
-        annual_summary[["year", "fold_id", "annual_return", "max_drawdown", "start_nav", "end_nav"]],
-        width="stretch",
-        hide_index=True,
-    )
-
-
-def _optional_selectbox(st, label: str, values: list[str]) -> str | None:
-    choice = st.sidebar.selectbox(label, ["All", *values])
-    return None if choice == "All" else choice
-
-
-def _option_values(frame: pd.DataFrame, column: str) -> list[str]:
-    if frame.empty or column not in frame:
-        return []
-    return sorted(str(value) for value in frame[column].dropna().unique() if str(value) != "")
-
-
-def _series_frame(nav: pd.DataFrame, column: str) -> pd.DataFrame:
-    if nav.empty or column not in nav:
-        return pd.DataFrame()
-    frame = nav.copy()
-    frame["series"] = frame[["fold_id", "strategy_id", "score_version"]].fillna("").agg(" / ".join, axis=1)
-    return frame.pivot_table(index="sim_date", columns="series", values=column, aggfunc="last").sort_index()
-
-
-def _drawdown_frame(nav: pd.DataFrame) -> pd.DataFrame:
-    series = _series_frame(nav, "nav")
-    if series.empty:
-        return series
-    return series.divide(series.cummax()).subtract(1.0)
-
-
-def _metric_count(frame: pd.DataFrame, column: str) -> int:
-    if frame.empty or column not in frame:
-        return 0
-    return int(frame[column].dropna().nunique())
-
-
-def _metric_mean(frame: pd.DataFrame, column: str, fmt: str) -> str:
-    if frame.empty or column not in frame:
-        return ""
-    value = frame[column].dropna().mean()
-    return "" if pd.isna(value) else fmt.format(value)
-
-
-def _metric_min(frame: pd.DataFrame, column: str, fmt: str) -> str:
-    if frame.empty or column not in frame:
-        return ""
-    value = frame[column].dropna().min()
-    return "" if pd.isna(value) else fmt.format(value)
 
 
 if __name__ == "__main__":

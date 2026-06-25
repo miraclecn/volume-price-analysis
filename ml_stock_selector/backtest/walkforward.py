@@ -26,13 +26,18 @@ from ml_stock_selector.models.active_ranker import train_active_ranker
 from ml_stock_selector.models.alpha_ranker import train_alpha_ranker
 from ml_stock_selector.models.artifacts import ModelArtifact
 from ml_stock_selector.models.config import artifact_params_json, ranker_config_from_model_section, risk_config_from_model_section
-from ml_stock_selector.models.fold_cache_training import train_three_models_from_fold_cache
+from ml_stock_selector.models.fold_cache_training import train_alpha_risk_models_from_fold_cache, train_three_models_from_fold_cache
 from ml_stock_selector.models.risk_model import train_risk_model
 from ml_stock_selector.portfolio.allocator import allocate_weights
 from ml_stock_selector.portfolio.constraints import PortfolioConstraints
 from ml_stock_selector.portfolio.constructor import construct_portfolio_targets_v2
 from ml_stock_selector.portfolio.holding_policy import HoldingPolicy
-from ml_stock_selector.prediction import build_three_model_prediction_rows, predict_with_model, write_chunked_fold_predictions
+from ml_stock_selector.prediction import (
+    build_three_model_prediction_rows,
+    predict_with_model,
+    write_chunked_alpha_risk_fold_predictions,
+    write_chunked_fold_predictions,
+)
 from ml_stock_selector.registry import register_model
 from ml_stock_selector.runtime.artifacts import write_model_artifact_bundle, write_walkforward_fold_artifacts
 from ml_stock_selector.sample_builder import build_training_samples
@@ -339,7 +344,10 @@ def run_walkforward_feature_store_experiment(
     batch_size: int = 50000,
     prediction_chunk_size: int = 50000,
     force: bool = False,
+    model_mode: str = "three_model",
 ) -> list[WalkForwardFoldResult]:
+    if model_mode not in {"three_model", "alpha_risk"}:
+        raise ValueError(f"Unknown model_mode: {model_mode}")
     selected_folds = _select_folds(config.split.get("folds", []), fold_id)
     spec = FeatureStoreSpec(feature_store_dir, feature_store_version, feature_set_id)
     results: list[WalkForwardFoldResult] = []
@@ -391,16 +399,20 @@ def run_walkforward_feature_store_experiment(
                 )
             )
             if not force and is_fold_manifest_complete(cache, "models_trained"):
-                artifacts = _artifacts_from_manifest(cache, read_fold_manifest(cache.manifest_path))
+                artifacts = _artifacts_from_manifest(cache, read_fold_manifest(cache.manifest_path), model_mode)
             else:
-                artifacts = train_three_models_from_fold_cache(cache, config, artifact_dir)
+                artifacts = (
+                    train_alpha_risk_models_from_fold_cache(cache, config, artifact_dir)
+                    if model_mode == "alpha_risk"
+                    else train_three_models_from_fold_cache(cache, config, artifact_dir)
+                )
                 if fold_artifact_root is not None:
-                    artifacts = _bundle_three_model_artifacts(fold_artifact_root, artifacts)
+                    artifacts = _bundle_artifacts(fold_artifact_root, artifacts)
                 update_fold_manifest_status(cache.manifest_path, "models_trained", artifacts=_artifact_manifest(artifacts))
             if fold_artifact_root is not None and not str(artifacts.absolute.artifact_dir).startswith(str(fold_artifact_root)):
-                artifacts = _bundle_three_model_artifacts(fold_artifact_root, artifacts)
+                artifacts = _bundle_artifacts(fold_artifact_root, artifacts)
             manifest = read_fold_manifest(cache.manifest_path)
-            for artifact in [artifacts.absolute, artifacts.active, artifacts.risk]:
+            for artifact in _iter_artifacts(artifacts):
                 register_model(
                     con,
                     model_id=artifact.model_id,
@@ -426,15 +438,25 @@ def run_walkforward_feature_store_experiment(
                     test_end=str(fold["test_end"]),
                 )
             if force or not is_fold_manifest_complete(cache, "predicted"):
-                rows_written = write_chunked_fold_predictions(
-                    con,
-                    cache,
-                    artifacts.absolute,
-                    artifacts.active,
-                    artifacts.risk,
-                    score_version=score_version,
-                    chunk_size=prediction_chunk_size,
-                )
+                if model_mode == "alpha_risk":
+                    rows_written = write_chunked_alpha_risk_fold_predictions(
+                        con,
+                        cache,
+                        artifacts.absolute,
+                        artifacts.risk,
+                        score_version=score_version,
+                        chunk_size=prediction_chunk_size,
+                    )
+                else:
+                    rows_written = write_chunked_fold_predictions(
+                        con,
+                        cache,
+                        artifacts.absolute,
+                        artifacts.active,
+                        artifacts.risk,
+                        score_version=score_version,
+                        chunk_size=prediction_chunk_size,
+                    )
                 update_fold_manifest_status(cache.manifest_path, "predicted", prediction_rows=rows_written)
             predictions = _load_fold_predictions(con, run_id, current_fold_id, score_version)
             metadata = con.execute("select * from read_parquet(?)", [str(cache.metadata_test_path)]).fetchdf()
@@ -491,7 +513,7 @@ def run_walkforward_feature_store_experiment(
                     positions=backtest.positions,
                     nav=backtest.nav,
                     metrics=fold_metrics,
-                    models={"absolute": artifacts.absolute.model_id, "active": artifacts.active.model_id, "risk": artifacts.risk.model_id},
+                    models=_model_id_map(artifacts),
                 )
             results.append(
                 WalkForwardFoldResult(
@@ -528,6 +550,37 @@ def _bundle_three_model_artifacts(fold_root: Path, artifacts):
     )
 
 
+def _bundle_alpha_risk_artifacts(fold_root: Path, artifacts):
+    from ml_stock_selector.models.fold_cache_training import AlphaRiskFoldArtifacts
+
+    return AlphaRiskFoldArtifacts(
+        absolute=write_model_artifact_bundle(fold_root, "absolute_ranker", artifacts.absolute),
+        risk=write_model_artifact_bundle(fold_root, "risk_model", artifacts.risk),
+    )
+
+
+def _bundle_artifacts(fold_root: Path, artifacts):
+    if hasattr(artifacts, "active"):
+        return _bundle_three_model_artifacts(fold_root, artifacts)
+    return _bundle_alpha_risk_artifacts(fold_root, artifacts)
+
+
+def _iter_artifacts(artifacts) -> list[ModelArtifact]:
+    values = [artifacts.absolute]
+    if hasattr(artifacts, "active"):
+        values.append(artifacts.active)
+    values.append(artifacts.risk)
+    return values
+
+
+def _model_id_map(artifacts) -> dict[str, str | None]:
+    return {
+        "absolute": artifacts.absolute.model_id,
+        "active": artifacts.active.model_id if hasattr(artifacts, "active") else None,
+        "risk": artifacts.risk.model_id,
+    }
+
+
 def _select_folds(folds: list[dict[str, object]], fold_id: str | None) -> list[dict[str, object]]:
     if fold_id is None:
         return folds
@@ -550,11 +603,13 @@ def _load_fold_predictions(con, run_id: str, fold_id: str, score_version: str) -
 
 
 def _artifact_manifest(artifacts) -> dict[str, dict[str, object]]:
-    return {
+    payload = {
         "absolute": _artifact_payload(artifacts.absolute),
-        "active": _artifact_payload(artifacts.active),
         "risk": _artifact_payload(artifacts.risk),
     }
+    if hasattr(artifacts, "active"):
+        payload["active"] = _artifact_payload(artifacts.active)
+    return payload
 
 
 def _artifact_payload(artifact: ModelArtifact) -> dict[str, object]:
@@ -572,12 +627,19 @@ def _artifact_payload(artifact: ModelArtifact) -> dict[str, object]:
     }
 
 
-def _artifacts_from_manifest(cache: FoldMatrixCache, manifest: dict[str, object]):
-    from ml_stock_selector.models.fold_cache_training import ThreeModelFoldArtifacts
-
+def _artifacts_from_manifest(cache: FoldMatrixCache, manifest: dict[str, object], model_mode: str):
     raw = manifest.get("artifacts")
     if not isinstance(raw, dict):
         raise ValueError(f"fold manifest is missing trained model artifacts: {cache.manifest_path}")
+    if model_mode == "alpha_risk":
+        from ml_stock_selector.models.fold_cache_training import AlphaRiskFoldArtifacts
+
+        return AlphaRiskFoldArtifacts(
+            absolute=_artifact_from_payload(raw["absolute"]),
+            risk=_artifact_from_payload(raw["risk"]),
+        )
+    from ml_stock_selector.models.fold_cache_training import ThreeModelFoldArtifacts
+
     return ThreeModelFoldArtifacts(
         absolute=_artifact_from_payload(raw["absolute"]),
         active=_artifact_from_payload(raw["active"]),

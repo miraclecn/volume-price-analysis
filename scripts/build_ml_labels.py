@@ -32,6 +32,9 @@ def main() -> None:
         horizons,
         float(config.labels["risk_drawdown_threshold"]),
         include_v2=bool(config.ml_v2["labels_v2_enabled"]),
+        future_score_weights=config.labels["future_score_weights"],
+        rank_label_thresholds=config.labels["rank_label_thresholds"],
+        rank_group_by_limit_band=bool(config.labels["rank_group_by_limit_band"]),
     )
     labels = _trim_labels_to_requested_range(labels, start_date, end_date)
     con = init_ml_db(str(config.data["ml_db"]))

@@ -315,6 +315,8 @@ def test_ml_schema_exposes_nullable_v2_label_and_prediction_columns(tmp_path):
     con = init_ml_db(tmp_path / "ml.duckdb")
 
     label_columns = _columns(con, "ml_labels_daily")
+    tradeability_columns = _columns(con, "ml_tradeability_daily")
+    feature_mart_columns = _columns(con, "ml_feature_mart_daily")
     prediction_columns = _columns(con, "ml_predictions_daily")
     con.close()
 
@@ -332,7 +334,12 @@ def test_ml_schema_exposes_nullable_v2_label_and_prediction_columns(tmp_path):
         "benchmark_missing_market",
         "benchmark_missing_industry",
         "benchmark_peer_count",
+        "limit_up_pct",
+        "limit_down_pct",
+        "limit_band",
     }.issubset(label_columns)
+    assert {"limit_up_pct", "limit_down_pct", "limit_band"}.issubset(tradeability_columns)
+    assert {"limit_up_pct", "limit_down_pct", "limit_band"}.issubset(feature_mart_columns)
     assert {
         "absolute_score",
         "absolute_rank_pct",

@@ -1,10 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Mapping
 
 import pandas as pd
 
 from ml_stock_selector.constants import LABEL_BASE_FROM_CLOSE, LABEL_BASE_FROM_NEXT_OPEN, UNKNOWN_INDUSTRY_CODE
+from ml_stock_selector.limit_bands import add_limit_band_columns
+
+
+DEFAULT_FUTURE_SCORE_WEIGHTS = {
+    "future_ret": 1.0,
+    "future_max_gain": 0.5,
+    "future_max_drawdown_abs": -0.7,
+}
+DEFAULT_RANK_LABEL_THRESHOLDS = [
+    {"label": 4, "min_rank_pct": 0.99},
+    {"label": 3, "min_rank_pct": 0.95},
+    {"label": 2, "min_rank_pct": 0.90},
+    {"label": 1, "min_rank_pct": 0.70},
+]
 
 
 def build_labels(
@@ -14,7 +29,13 @@ def build_labels(
     label_bases: list[str] | None = None,
     include_v2: bool = False,
     min_industry_peer_count: int = 1,
+    future_score_weights: Mapping[str, object] | None = None,
+    rank_label_thresholds: list[Mapping[str, object]] | None = None,
+    rank_group_by_limit_band: bool = False,
 ) -> pd.DataFrame:
+    normalized_bars = add_limit_band_columns(normalized_bars)
+    score_weights = normalize_future_score_weights(future_score_weights)
+    thresholds = normalize_rank_label_thresholds(rank_label_thresholds)
     label_bases = label_bases or [LABEL_BASE_FROM_CLOSE, LABEL_BASE_FROM_NEXT_OPEN]
     generated_at = datetime.now(timezone.utc).isoformat()
     rows = []
@@ -35,7 +56,11 @@ def build_labels(
                     future_ret = _ret(base_price, float(future.iloc[-1]["close"]))
                     max_gain = _ret(base_price, float(future["high"].max()))
                     max_drawdown = _ret(base_price, float(future["low"].min()))
-                    score = future_ret + 0.5 * max_gain - 0.7 * abs(max_drawdown)
+                    score = (
+                        score_weights["future_ret"] * future_ret
+                        + score_weights["future_max_gain"] * max_gain
+                        + score_weights["future_max_drawdown_abs"] * abs(max_drawdown)
+                    )
                     rows.append(
                         {
                             "trade_date": item["trade_date"],
@@ -43,6 +68,9 @@ def build_labels(
                             "industry_code": item.get("industry_code"),
                             "horizon_d": horizon,
                             "label_base": label_base,
+                            "limit_up_pct": item.get("limit_up_pct"),
+                            "limit_down_pct": item.get("limit_down_pct"),
+                            "limit_band": item.get("limit_band"),
                             "base_price": base_price,
                             "future_ret": future_ret,
                             "future_max_gain": max_gain,
@@ -58,32 +86,53 @@ def build_labels(
     labels = pd.DataFrame(rows)
     if labels.empty:
         return labels
-    labels["future_rank_pct"] = labels.groupby(["trade_date", "horizon_d", "label_base"])["future_score"].rank(pct=True)
-    labels["rank_label"] = labels["future_rank_pct"].map(rank_label_from_pct).astype("int64")
+    rank_group_keys = _rank_group_keys(labels, rank_group_by_limit_band)
+    labels["future_rank_pct"] = labels.groupby(rank_group_keys)["future_score"].rank(pct=True)
+    labels["rank_label"] = labels["future_rank_pct"].map(lambda value: rank_label_from_pct(value, thresholds)).astype("int64")
     mean_ret = labels.groupby(["trade_date", "horizon_d", "label_base"])["future_ret"].transform("mean")
     labels["outperform_market"] = labels["future_ret"] > mean_ret
     if include_v2:
-        labels = _add_v2_labels(labels, min_industry_peer_count)
+        labels = _add_v2_labels(labels, min_industry_peer_count, thresholds, rank_group_by_limit_band)
     return labels.sort_values(["trade_date", "code", "horizon_d", "label_base"]).reset_index(drop=True)
 
 
-def rank_label_from_pct(rank_pct: float) -> int:
-    if rank_pct >= 0.99:
-        return 4
-    if rank_pct >= 0.95:
-        return 3
-    if rank_pct >= 0.90:
-        return 2
-    if rank_pct >= 0.70:
-        return 1
+def rank_label_from_pct(rank_pct: float, thresholds: list[Mapping[str, object]] | None = None) -> int:
+    for threshold in normalize_rank_label_thresholds(thresholds):
+        if rank_pct >= float(threshold["min_rank_pct"]):
+            return int(threshold["label"])
     return 0
+
+
+def normalize_future_score_weights(weights: Mapping[str, object] | None = None) -> dict[str, float]:
+    raw = {**DEFAULT_FUTURE_SCORE_WEIGHTS, **dict(weights or {})}
+    return {
+        "future_ret": float(raw["future_ret"]),
+        "future_max_gain": float(raw["future_max_gain"]),
+        "future_max_drawdown_abs": float(raw["future_max_drawdown_abs"]),
+    }
+
+
+def normalize_rank_label_thresholds(
+    thresholds: list[Mapping[str, object]] | None = None,
+) -> list[dict[str, float | int]]:
+    raw = thresholds or DEFAULT_RANK_LABEL_THRESHOLDS
+    normalized = [
+        {"label": int(item["label"]), "min_rank_pct": float(item["min_rank_pct"])}
+        for item in raw
+    ]
+    return sorted(normalized, key=lambda item: float(item["min_rank_pct"]), reverse=True)
 
 
 def _ret(current: float, future: float) -> float:
     return round(float(future) / float(current) - 1.0, 12)
 
 
-def _add_v2_labels(labels: pd.DataFrame, min_industry_peer_count: int) -> pd.DataFrame:
+def _add_v2_labels(
+    labels: pd.DataFrame,
+    min_industry_peer_count: int,
+    rank_label_thresholds: list[Mapping[str, object]],
+    rank_group_by_limit_band: bool,
+) -> pd.DataFrame:
     out = labels.copy()
     group_keys = ["trade_date", "horizon_d", "label_base"]
     out["absolute_ret"] = out["future_ret"]
@@ -112,10 +161,17 @@ def _add_v2_labels(labels: pd.DataFrame, min_industry_peer_count: int) -> pd.Dat
             0.5 * out.loc[has_industry, "market_excess_ret"]
             + 0.5 * out.loc[has_industry, "industry_excess_ret"]
         )
-    out["active_rank_pct"] = out.groupby(group_keys)["active_score"].rank(pct=True)
-    out["active_label"] = out["active_rank_pct"].map(rank_label_from_pct).astype("int64")
+    out["active_rank_pct"] = out.groupby(_rank_group_keys(out, rank_group_by_limit_band))["active_score"].rank(pct=True)
+    out["active_label"] = out["active_rank_pct"].map(lambda value: rank_label_from_pct(value, rank_label_thresholds)).astype("int64")
     out["benchmark_missing_market"] = out["benchmark_missing_market"].astype(object)
     return out
+
+
+def _rank_group_keys(labels: pd.DataFrame, rank_group_by_limit_band: bool) -> list[str]:
+    keys = ["trade_date", "horizon_d", "label_base"]
+    if rank_group_by_limit_band and "limit_band" in labels.columns:
+        keys.append("limit_band")
+    return keys
 
 
 def _is_unknown_industry(value: object) -> bool:

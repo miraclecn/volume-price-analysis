@@ -30,7 +30,7 @@ def test_executable_only_training_samples_filter_tradeability_without_feature_le
             "code": ["good", "bse", "st", "paused", "illiquid"],
             "feature_set_id": ["set"] * 5,
             "features_json": ['{"x": 1.0}'] * 5,
-            "can_buy_next_open": [True, True, True, True, True],
+            "can_buy_next_open": [False, True, True, True, True],
             "is_bse": [False, True, False, False, False],
             "is_st": [False, False, True, False, False],
             "is_paused": [False, False, False, True, False],

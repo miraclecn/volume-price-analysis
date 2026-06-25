@@ -1,0 +1,185 @@
+[data]
+alpha_data_db = "/home/nan/alpha-data-local/output/research_source.duckdb"
+vpa_db = "outputs/vpa.duckdb"
+ml_db = "outputs/ml/ml_ret5_alpha_risk_20260619.duckdb"
+normalized_bars_table = "stock_bar_normalized_daily"
+artifact_dir = "outputs/ml/artifacts/ret5_alpha_risk_20260619"
+report_dir = "outputs/ml/reports/ret5_alpha_risk_20260619"
+
+[features]
+windows = [5, 10, 20, 60, 120, 240]
+feature_set_id = "vpa_d_sequence"
+include_structure_state = false
+
+[labels]
+horizons = [1, 5, 10]
+main_horizon = 5
+label_base = "from_next_open"
+risk_drawdown_threshold = -0.05
+rank_group_by_limit_band = false
+
+[labels.future_score_weights]
+future_ret = 1.0
+future_max_gain = 0.0
+future_max_drawdown_abs = 0.0
+
+[split]
+embargo_days = 10
+folds = [
+  { fold_id = "wf_2020", train_start = "2015-01-05", train_end = "2018-12-31", valid_start = "2019-01-01", valid_end = "2019-12-31", test_start = "2020-01-01", test_end = "2020-12-31" },
+  { fold_id = "wf_2021", train_start = "2015-01-05", train_end = "2019-12-31", valid_start = "2020-01-01", valid_end = "2020-12-31", test_start = "2021-01-01", test_end = "2021-12-31" },
+  { fold_id = "wf_2022", train_start = "2015-01-05", train_end = "2020-12-31", valid_start = "2021-01-01", valid_end = "2021-12-31", test_start = "2022-01-01", test_end = "2022-12-31" },
+  { fold_id = "wf_2023", train_start = "2015-01-05", train_end = "2021-12-31", valid_start = "2022-01-01", valid_end = "2022-12-31", test_start = "2023-01-01", test_end = "2023-12-31" },
+  { fold_id = "wf_2024", train_start = "2015-01-05", train_end = "2022-12-31", valid_start = "2023-01-01", valid_end = "2023-12-31", test_start = "2024-01-01", test_end = "2024-12-31" },
+  { fold_id = "wf_2025", train_start = "2015-01-05", train_end = "2023-12-31", valid_start = "2024-01-01", valid_end = "2024-12-31", test_start = "2025-01-01", test_end = "2025-12-31" }
+]
+
+[universe]
+exclude_bse = true
+train_filter_can_buy_next_open = true
+
+[model.alpha_ranker]
+objective = "lambdarank"
+metric = "ndcg"
+eval_at = [10, 15]
+lambdarank_truncation_level = 18
+num_leaves = 63
+learning_rate = 0.05
+feature_fraction = 0.8
+bagging_fraction = 0.8
+bagging_freq = 1
+min_data_in_leaf = 300
+lambda_l2 = 5.0
+
+[model.lightgbm_runtime]
+n_estimators = 25
+early_stopping_rounds = 0
+num_threads = 8
+force_col_wise = true
+histogram_pool_size = -1
+max_bin = 63
+num_leaves = 31
+min_data_in_leaf = 500
+feature_fraction = 0.8
+bagging_fraction = 0.8
+bagging_freq = 1
+
+[portfolio]
+target_positions = 12
+hard_max_positions = 15
+max_industry_names = 3
+max_new_entries_per_day = 4
+single_name_min_weight = 0.10
+single_name_max_weight = 0.30
+allow_cash = true
+min_trade_score = 0.80
+min_adv20_amount = 10000000
+
+[portfolio.v2]
+target_positions = 12
+hard_max_positions = 15
+max_initial_entries = 12
+max_new_entries_per_day = 4
+max_industry_names = 3
+max_unknown_industry_names = 1
+min_trade_score = 0.75
+core_min_trade_score = 0.75
+candidate_min_trade_score = 0.75
+min_candidate_pool_size = 5
+allow_cash = true
+min_adv20_amount = 10000000
+exclude_bse = true
+
+[portfolio.v2.holding]
+min_hold_days = 3
+target_hold_days = 5
+max_hold_days = 10
+
+[portfolio.v2.exit]
+sell_score_threshold = 0.45
+risk_exit_rank_pct = 0.85
+risk_exit_prob = 0.70
+sell_if_not_candidate_after_target_days = true
+force_exit_after_max_hold_days = true
+allow_score_exit_before_min_hold = false
+
+[portfolio.fixed_5d_risk_filter]
+enabled = true
+strategy_id = "abs_ranker_fixed_5d_risk_filter_v1"
+holding_days = 5
+target_positions = 10
+hard_max_positions = 12
+max_initial_entries = 10
+max_new_entries_per_day = 12
+min_abs_rank_pct = 0.70
+risk_entry_max_rank_pct = 0.55
+risk_exit_rank_pct = 0.85
+renewal_candidate_rank = 30
+min_adv20_amount = 10000000
+exclude_bse = true
+exclude_st = true
+exclude_paused = true
+require_can_buy_next_open = true
+allow_cash = true
+position_weight_mode = "equal_weight"
+min_position_weight = 0.06
+max_position_weight = 0.12
+enable_risk_exit = true
+enable_score_exit = false
+enable_not_candidate_exit = false
+enable_trailing_exit = false
+enable_time_exit = true
+
+[portfolio.fixed_5d_no_risk_exit]
+enabled = true
+strategy_id = "abs_ranker_fixed_5d_no_risk_exit_v1"
+holding_days = 5
+target_positions = 10
+hard_max_positions = 12
+max_initial_entries = 10
+max_new_entries_per_day = 12
+min_abs_rank_pct = 0.70
+risk_entry_max_rank_pct = 0.55
+risk_exit_rank_pct = 0.85
+renewal_candidate_rank = 30
+min_adv20_amount = 10000000
+exclude_bse = true
+exclude_st = true
+exclude_paused = true
+require_can_buy_next_open = true
+allow_cash = true
+position_weight_mode = "equal_weight"
+min_position_weight = 0.06
+max_position_weight = 0.12
+enable_risk_exit = false
+enable_score_exit = false
+enable_not_candidate_exit = false
+enable_trailing_exit = false
+enable_time_exit = true
+
+[backtest]
+initial_cash = 1000000
+execution_price = "next_open"
+slippage_bps = 5
+commission_bps = 3
+stamp_duty_bps = 5
+a_share_lot_size = 100
+allow_fractional_shares = true
+
+[ml_v2]
+exclude_industry_metadata_from_features_json = true
+feature_matrix_v2_deny_industry = true
+labels_v2_enabled = true
+active_ranker_enabled = false
+risk_model_v2_enabled = true
+trade_score_v2_enabled = true
+daily_signal_v2_enabled = true
+candidate_absolute_min_rank_pct = 0.70
+candidate_active_min_rank_pct = 0.70
+candidate_risk_max_rank_pct = 0.65
+candidate_min_trade_score = 0.75
+min_candidate_pool_size = 5
+core_absolute_min_rank_pct = 0.75
+core_active_min_rank_pct = 0.65
+core_risk_max_rank_pct = 0.55
+core_min_trade_score = 0.75

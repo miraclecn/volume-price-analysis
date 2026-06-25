@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 import tomllib
 
+from ml_stock_selector.label_builder import DEFAULT_FUTURE_SCORE_WEIGHTS, DEFAULT_RANK_LABEL_THRESHOLDS
+
 
 @dataclass(frozen=True)
 class MLConfig:
@@ -37,6 +39,12 @@ DEFAULT_ML_V2_CONFIG: dict[str, object] = {
     "core_min_trade_score": 0.75,
 }
 
+DEFAULT_LABEL_CONFIG: dict[str, object] = {
+    "future_score_weights": DEFAULT_FUTURE_SCORE_WEIGHTS,
+    "rank_label_thresholds": DEFAULT_RANK_LABEL_THRESHOLDS,
+    "rank_group_by_limit_band": False,
+}
+
 
 def load_ml_config(path: Path | str) -> MLConfig:
     raw = tomllib.loads(Path(path).read_text(encoding="utf-8"))
@@ -44,10 +52,11 @@ def load_ml_config(path: Path | str) -> MLConfig:
     missing = [section for section in required if section not in raw]
     if missing:
         raise ValueError(f"Missing ML config sections: {', '.join(missing)}")
+    labels = _merge_label_config(raw["labels"])
     config = MLConfig(
         data=raw["data"],
         features=raw["features"],
-        labels=raw["labels"],
+        labels=labels,
         split=raw["split"],
         universe=raw.get("universe", {"exclude_bse": False}),
         model=raw["model"],
@@ -74,3 +83,15 @@ def _validate_config(config: MLConfig) -> None:
                 raise ValueError("sell_score_threshold must be below candidate_min_trade_score")
     if config.backtest["a_share_lot_size"] <= 0:
         raise ValueError("a_share_lot_size must be positive")
+
+
+def _merge_label_config(raw_labels: dict[str, object]) -> dict[str, object]:
+    labels = {**DEFAULT_LABEL_CONFIG, **raw_labels}
+    raw_weights = raw_labels.get("future_score_weights", {})
+    labels["future_score_weights"] = {
+        **DEFAULT_FUTURE_SCORE_WEIGHTS,
+        **(raw_weights if isinstance(raw_weights, dict) else {}),
+    }
+    labels["rank_label_thresholds"] = raw_labels.get("rank_label_thresholds", DEFAULT_RANK_LABEL_THRESHOLDS)
+    labels["rank_group_by_limit_band"] = bool(raw_labels.get("rank_group_by_limit_band", DEFAULT_LABEL_CONFIG["rank_group_by_limit_band"]))
+    return labels

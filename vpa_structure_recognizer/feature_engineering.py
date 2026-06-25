@@ -32,6 +32,8 @@ FEATURE_COLUMNS = [
     "body_rvol_n",
     "price_high_n",
     "price_low_n",
+    "prev_price_high_n",
+    "prev_price_low_n",
     "price_position_n",
     "ma_n",
     "ma_slope_n",
@@ -74,6 +76,8 @@ def compute_features(
         features["body_rvol_n"] = _safe_div(features["body_pct"], features["body_pct_ma_n"])
         features["price_high_n"] = _rolling(grouped["high"], window, "max")
         features["price_low_n"] = _rolling(grouped["low"], window, "min")
+        features["prev_price_high_n"] = _rolling_prior(grouped["high"], window, "max")
+        features["prev_price_low_n"] = _rolling_prior(grouped["low"], window, "min")
         features["price_position_n"] = _safe_div(
             features["close"] - features["price_low_n"],
             features["price_high_n"] - features["price_low_n"],
@@ -112,6 +116,14 @@ def _rolling(grouped: pd.core.groupby.SeriesGroupBy, window: int, op: str) -> pd
         return grouped.transform(lambda values: values.rolling(window, min_periods=1).max())
     if op == "min":
         return grouped.transform(lambda values: values.rolling(window, min_periods=1).min())
+    raise ValueError(f"unsupported rolling operation: {op}")
+
+
+def _rolling_prior(grouped: pd.core.groupby.SeriesGroupBy, window: int, op: str) -> pd.Series:
+    if op == "max":
+        return grouped.transform(lambda values: values.rolling(window, min_periods=1).max().shift(1))
+    if op == "min":
+        return grouped.transform(lambda values: values.rolling(window, min_periods=1).min().shift(1))
     raise ValueError(f"unsupported rolling operation: {op}")
 
 

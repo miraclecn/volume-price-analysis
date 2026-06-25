@@ -15,6 +15,18 @@ def test_default_ml_config_loads():
     assert config.features["windows"] == DEFAULT_FEATURE_WINDOWS
     assert config.features["feature_set_id"] == FEATURE_SET_VPA_D
     assert config.backtest["execution_price"] == "next_open"
+    assert config.labels["future_score_weights"] == {
+        "future_ret": 1.0,
+        "future_max_gain": 0.5,
+        "future_max_drawdown_abs": -0.7,
+    }
+    assert config.labels["rank_label_thresholds"] == [
+        {"label": 4, "min_rank_pct": 0.99},
+        {"label": 3, "min_rank_pct": 0.95},
+        {"label": 2, "min_rank_pct": 0.90},
+        {"label": 1, "min_rank_pct": 0.70},
+    ]
+    assert config.labels["rank_group_by_limit_band"] is True
 
 
 def test_default_ml_config_exposes_v2_flags_enabled():

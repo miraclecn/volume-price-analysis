@@ -16,6 +16,7 @@ from ml_stock_selector.tradeability import build_tradeability_mart
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config/ml_default.toml")
+    parser.add_argument("--bar-start-date", help="Optional earlier date used only to load OHLCV history for rolling features.")
     parser.add_argument("--start-date")
     parser.add_argument("--end-date")
     parser.add_argument("--write-duckdb", type=_parse_bool, default=True)
@@ -27,7 +28,8 @@ def main() -> None:
     config = load_ml_config(args.config)
     start_date = args.start_date or "1900-01-01"
     end_date = args.end_date or "2999-12-31"
-    bars = load_normalized_stock_bars(str(config.data["alpha_data_db"]), start_date, end_date, str(config.data["normalized_bars_table"]))
+    bar_start_date = args.bar_start_date or start_date
+    bars = load_normalized_stock_bars(str(config.data["alpha_data_db"]), bar_start_date, end_date, str(config.data["normalized_bars_table"]))
     tradeability = build_tradeability_mart(bars)
     feature_mart = build_feature_mart(
         str(config.data["vpa_db"]),

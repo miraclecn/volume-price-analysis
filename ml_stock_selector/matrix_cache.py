@@ -100,6 +100,7 @@ def build_fold_matrix_cache(
     universe = dict(universe_config)
     exclude_bse = bool(universe.get("exclude_bse", False))
     min_adv20_amount = universe.get("min_adv20_amount")
+    train_filter_can_buy_next_open = bool(universe.get("train_filter_can_buy_next_open", False))
 
     train_rows = _write_labeled_split_streaming(
         con,
@@ -118,6 +119,7 @@ def build_fold_matrix_cache(
         label_base,
         exclude_bse,
         min_adv20_amount,
+        train_filter_can_buy_next_open,
         batch_size,
         schema.numeric_columns,
     )
@@ -138,6 +140,7 @@ def build_fold_matrix_cache(
         label_base,
         exclude_bse,
         min_adv20_amount,
+        train_filter_can_buy_next_open,
         batch_size,
         schema.numeric_columns,
     )
@@ -179,7 +182,7 @@ def build_fold_matrix_cache(
             "valid_rows": valid_rows,
             "test_rows": test_rows,
             "exclude_bse": exclude_bse,
-            "train_filter_can_buy_next_open": True,
+            "train_filter_can_buy_next_open": train_filter_can_buy_next_open,
             "train_filter_min_adv20_amount": min_adv20_amount,
             "matrix_format": "dense_float32_npy",
             "train_start": str(_fold_value(fold_config, "train_start")),
@@ -317,6 +320,7 @@ def _build_labeled_split(
     label_base: str,
     exclude_bse: bool,
     min_adv20_amount: object | None,
+    train_filter_can_buy_next_open: bool,
     batch_size: int,
 ) -> pd.DataFrame:
     labels = _labels_for_range(con, start_date, end_date, horizon_d, label_base)
@@ -325,7 +329,7 @@ def _build_labeled_split(
     for features in iter_feature_store_batches(spec, start_date, end_date, batch_size=batch_size):
         merged = features.merge(labels, on=["trade_date", "code"], how="inner").merge(metadata, on=["trade_date", "code"], how="left")
         merged = apply_universe_filter(merged, exclude_bse=exclude_bse)
-        merged = _filter_trainable_tradeability(merged, min_adv20_amount)
+        merged = _filter_trainable_tradeability(merged, min_adv20_amount, train_filter_can_buy_next_open)
         merged = merged.dropna(subset=["absolute_label", "active_label", "risk_label"])
         frames.append(merged)
     if not frames:
@@ -360,6 +364,7 @@ def _write_labeled_split_streaming(
     label_base: str,
     exclude_bse: bool,
     min_adv20_amount: object | None,
+    train_filter_can_buy_next_open: bool,
     batch_size: int,
     feature_columns: list[str],
 ) -> int:
@@ -381,7 +386,7 @@ def _write_labeled_split_streaming(
                 .merge(metadata, on=["trade_date", "code"], how="left")
             )
             merged = apply_universe_filter(merged, exclude_bse=exclude_bse)
-            merged = _filter_trainable_tradeability(merged, min_adv20_amount)
+            merged = _filter_trainable_tradeability(merged, min_adv20_amount, train_filter_can_buy_next_open)
             merged = merged.dropna(subset=["absolute_label", "active_label", "risk_label"])
             if merged.empty:
                 continue
@@ -490,7 +495,7 @@ def _metadata_for_range(con, start_date: str, end_date: str) -> pd.DataFrame:
     return con.execute(
         """
         select trade_date, code, industry_code, industry_name, is_bse, is_st, is_paused,
-               adv20_amount, can_buy_next_open
+               adv20_amount, can_buy_next_open, limit_up_pct, limit_down_pct, limit_band
         from ml_tradeability_daily
         where trade_date >= ? and trade_date <= ?
         """,
@@ -498,13 +503,15 @@ def _metadata_for_range(con, start_date: str, end_date: str) -> pd.DataFrame:
     ).fetchdf()
 
 
-def _filter_trainable_tradeability(frame: pd.DataFrame, min_adv20_amount: object | None) -> pd.DataFrame:
+def _filter_trainable_tradeability(
+    frame: pd.DataFrame,
+    min_adv20_amount: object | None,
+    train_filter_can_buy_next_open: bool = False,
+) -> pd.DataFrame:
     if frame.empty:
         return frame.copy()
     out = frame.copy()
     mask = pd.Series(True, index=out.index)
-    if "can_buy_next_open" in out:
-        mask &= out["can_buy_next_open"].fillna(False).astype(bool)
     for column in ["is_st", "is_paused"]:
         if column in out:
             mask &= ~out[column].fillna(False).astype(bool)
@@ -512,6 +519,8 @@ def _filter_trainable_tradeability(frame: pd.DataFrame, min_adv20_amount: object
         threshold = float(min_adv20_amount)
         if threshold > 0.0:
             mask &= pd.to_numeric(out["adv20_amount"], errors="coerce").fillna(0.0) >= threshold
+    if train_filter_can_buy_next_open and "can_buy_next_open" in out:
+        mask &= out["can_buy_next_open"].fillna(False).astype(bool)
     return out[mask].copy()
 
 
@@ -548,6 +557,9 @@ def _metadata_frame(frame: pd.DataFrame) -> pd.DataFrame:
         "is_paused",
         "adv20_amount",
         "can_buy_next_open",
+        "limit_up_pct",
+        "limit_down_pct",
+        "limit_band",
     ]
     if frame.empty:
         return pd.DataFrame(columns=metadata_columns)

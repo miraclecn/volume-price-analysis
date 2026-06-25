@@ -45,6 +45,8 @@ def test_compute_features_uses_percentage_price_metrics_and_window_volume():
     assert last["vol_rvol_n"] == 1.5
     assert last["price_high_n"] == 12.0
     assert last["price_low_n"] == 9.0
+    assert last["prev_price_high_n"] == 11.0
+    assert last["prev_price_low_n"] == 9.0
     assert last["price_position_n"] == (11.5 - 9.0) / (12.0 - 9.0)
 
 

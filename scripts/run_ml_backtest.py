@@ -28,6 +28,11 @@ from ml_stock_selector.portfolio.fixed_horizon import fixed_horizon_config_from_
 from ml_stock_selector.runtime.artifacts import write_backtest_fold_artifacts
 from ml_stock_selector.runtime.run_context import create_run_context, register_run_context, register_run_fold, update_run_status
 from ml_stock_selector.scoring import add_context_score, add_liquidity_score, score_candidates, score_candidates_v2
+from ml_stock_selector.serving.live_sim import (
+    SCORE_VERSION as SCORE_VERSION_LIVE_ADV,
+    LiveSimConfig,
+    archived_adv_score,
+)
 from ml_stock_selector.storage import clear_backtest_outputs, clear_portfolio_targets, init_ml_db, upsert_dataframe
 
 
@@ -35,10 +40,13 @@ SCORE_VERSION_THREE_MODEL = "v2_three_model"
 SCORE_VERSION_ABSOLUTE_ONLY = "v2_absolute_only"
 SCORE_VERSION_ABSOLUTE_RISK_FILTER = "v2_absolute_risk_filter"
 SCORE_VERSION_ABSOLUTE_RISK_SORT = "v2_absolute_risk_sort"
+SCORE_VERSION_LIVE_ADV_PARITY = SCORE_VERSION_LIVE_ADV
 STRATEGY_FIXED_5D_RISK_FILTER = "abs_ranker_fixed_5d_risk_filter_v1"
 STRATEGY_FIXED_5D_NO_RISK_EXIT = "abs_ranker_fixed_5d_no_risk_exit_v1"
+STRATEGY_LIVE_SIM_PARITY = "live_sim_parity_v1"
 STRATEGY_HOLDING_AWARE_V2 = "holding_aware_v2"
 STRATEGY_LEGACY_V1 = "legacy_target_rebalance_v1"
+NEXT_OPEN_TRADEABILITY_COLUMNS = ["can_buy_next_open", "can_sell_next_open"]
 
 
 @dataclass(frozen=True)
@@ -55,11 +63,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--config", default="config/ml_default.toml")
     parser.add_argument("--run-id")
     parser.add_argument("--fold-id")
+    parser.add_argument("--prediction-run-id")
+    parser.add_argument("--prediction-fold-id")
     parser.add_argument(
         "--score-mode",
-        choices=["three_model", "absolute_only", "absolute_risk_filter", "absolute_risk_sort"],
+        choices=["three_model", "absolute_only", "absolute_risk_filter", "absolute_risk_sort", "live_adv"],
         default="three_model",
     )
+    parser.add_argument("--prediction-score-version")
     parser.add_argument("--candidate-risk-max-rank-pct", type=float)
     parser.add_argument("--core-risk-max-rank-pct", type=float)
     parser.add_argument("--target-positions", type=int)
@@ -72,11 +83,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--feature-set-id")
     parser.add_argument("--horizon-d", type=int)
     parser.add_argument("--label-base")
+    parser.add_argument("--initial-cash", type=float)
     parser.add_argument("--run-artifact-dir", default="outputs/ml/runs")
     return parser
 
 
 def _score_version_for_mode(score_mode: str) -> str:
+    if score_mode == "live_adv":
+        return SCORE_VERSION_LIVE_ADV_PARITY
     if score_mode == "absolute_only":
         return SCORE_VERSION_ABSOLUTE_ONLY
     if score_mode == "absolute_risk_filter":
@@ -92,6 +106,13 @@ def _portfolio_id_for_mode(
     suffix: str | None = None,
     strategy_id: str | None = None,
 ) -> str:
+    if score_mode == "live_adv":
+        base = LiveSimConfig().portfolio_id
+        if strategy_id:
+            base = f"{base}_{strategy_id}"
+        if suffix:
+            base = f"{base}_{suffix}"
+        return base
     base = fold_id or "default"
     if strategy_id:
         base = f"{base}_{strategy_id}"
@@ -111,7 +132,7 @@ def _backtest_identity(args) -> BacktestIdentity:
     fold_id = args.fold_id or "default"
     explicit_strategy = args.strategy_id
     fixed_strategy = explicit_strategy in {STRATEGY_FIXED_5D_RISK_FILTER, STRATEGY_FIXED_5D_NO_RISK_EXIT}
-    strategy_id = explicit_strategy or STRATEGY_HOLDING_AWARE_V2
+    strategy_id = explicit_strategy or (STRATEGY_LIVE_SIM_PARITY if args.score_mode == "live_adv" else STRATEGY_HOLDING_AWARE_V2)
     score_version = args.score_version or (strategy_id if fixed_strategy else _score_version_for_mode(args.score_mode))
     portfolio_id = _portfolio_id_for_mode(
         fold_id,
@@ -124,6 +145,8 @@ def _backtest_identity(args) -> BacktestIdentity:
 
 def _apply_score_mode(scored: pd.DataFrame, score_mode: str) -> pd.DataFrame:
     out = scored.copy()
+    if score_mode == "live_adv":
+        return archived_adv_score(out).drop(columns=NEXT_OPEN_TRADEABILITY_COLUMNS, errors="ignore")
     if score_mode not in {"absolute_only", "absolute_risk_filter", "absolute_risk_sort"}:
         return out
     if "absolute_rank_pct" not in out:
@@ -171,19 +194,57 @@ def _apply_constraint_overrides(constraints, args):
     return replace(constraints, **updates) if updates else constraints
 
 
+def _execution_config_for_mode(config, score_mode: str) -> ExecutionConfig:
+    if score_mode == "live_adv":
+        return LiveSimConfig().execution
+    return ExecutionConfig()
+
+
+def _initial_cash_for_mode(config, score_mode: str, override: float | None = None) -> float:
+    if override is not None:
+        return float(override)
+    if score_mode == "live_adv":
+        return float(LiveSimConfig().initial_cash)
+    return float(config.backtest["initial_cash"])
+
+
+def _weight_bounds_for_mode(config, constraints, score_mode: str) -> tuple[float, float, bool]:
+    if score_mode == "live_adv":
+        weight = 1.0 / max(int(constraints.target_positions), 1)
+        return weight, weight, True
+    return (
+        float(config.portfolio["single_name_min_weight"]),
+        float(config.portfolio["single_name_max_weight"]),
+        bool(config.portfolio["allow_cash"]),
+    )
+
+
 def main() -> None:
     args = build_arg_parser().parse_args()
     config = load_ml_config(args.config)
     ml_db = args.ml_db or str(config.data["ml_db"])
     con = init_ml_db(ml_db)
     try:
+        prediction_score_version = args.prediction_score_version
+        if prediction_score_version is None and bool(config.ml_v2["trade_score_v2_enabled"]):
+            prediction_score_version = SCORE_VERSION_THREE_MODEL
+        prediction_run_id = args.prediction_run_id or args.run_id
+        prediction_fold_id = args.prediction_fold_id or args.fold_id
         preds = load_backtest_candidates(
             con,
-            run_id=args.run_id,
-            fold_id=args.fold_id,
-            score_version=SCORE_VERSION_THREE_MODEL if bool(config.ml_v2["trade_score_v2_enabled"]) else None,
+            run_id=prediction_run_id,
+            fold_id=prediction_fold_id,
+            score_version=prediction_score_version,
             exclude_bse=bool(config.universe.get("exclude_bse", False)),
         )
+        if preds.empty and args.prediction_score_version is None and prediction_score_version is not None:
+            preds = load_backtest_candidates(
+                con,
+                run_id=prediction_run_id,
+                fold_id=prediction_fold_id,
+                score_version=None,
+                exclude_bse=bool(config.universe.get("exclude_bse", False)),
+            )
         if preds.empty:
             raise ValueError("No predictions matched the requested run/fold")
         identity = _backtest_identity(args)
@@ -232,13 +293,15 @@ def main() -> None:
             diagnostics = result.portfolio_diagnostics if result.portfolio_diagnostics is not None else pd.DataFrame()
             strategy_params = fixed_constraints
         else:
-            constraints = _apply_constraint_overrides(_portfolio_constraints_from_config(config), args)
+            base_constraints = LiveSimConfig().constraints if args.score_mode == "live_adv" else _portfolio_constraints_from_config(config)
+            constraints = _apply_constraint_overrides(base_constraints, args)
             strategy_params = constraints
             if bool(config.ml_v2["trade_score_v2_enabled"]):
                 scored = preds.copy()
-                if "trade_score_v2" not in scored or scored["trade_score_v2"].isna().any():
+                if args.score_mode != "live_adv" and ("trade_score_v2" not in scored or scored["trade_score_v2"].isna().any()):
                     scored = score_candidates_v2(add_liquidity_score(add_context_score(scored)))
                 scored = _apply_score_mode(scored, args.score_mode)
+                scored["score_version"] = score_version
                 unweighted_targets = construct_portfolio_targets_v2(
                     scored,
                     constraints,
@@ -248,11 +311,12 @@ def main() -> None:
                     score_version=score_version,
                 )
                 diagnostics = get_portfolio_diagnostics(unweighted_targets)
+                min_weight, max_weight, allow_cash = _weight_bounds_for_mode(config, constraints, args.score_mode)
                 targets = allocate_weights(
                     unweighted_targets,
-                    float(config.portfolio["single_name_min_weight"]),
-                    float(config.portfolio["single_name_max_weight"]),
-                    bool(config.portfolio["allow_cash"]),
+                    min_weight,
+                    max_weight,
+                    allow_cash,
                 )
             else:
                 scored = preds.copy()
@@ -262,19 +326,20 @@ def main() -> None:
                 diagnostics = pd.DataFrame()
             bars = load_normalized_stock_bars(str(config.data["alpha_data_db"]), scored["trade_date"].min(), scored["trade_date"].max(), str(config.data["normalized_bars_table"]))
             if bool(config.ml_v2["trade_score_v2_enabled"]):
+                min_weight, max_weight, allow_cash = _weight_bounds_for_mode(config, constraints, args.score_mode)
                 result = run_holding_aware_backtest(
                     scored,
                     bars,
                     constraints,
                     BacktestConfig(
-                        float(config.backtest["initial_cash"]),
+                        _initial_cash_for_mode(config, args.score_mode, args.initial_cash),
                         fold_id,
-                        ExecutionConfig(),
+                        _execution_config_for_mode(config, args.score_mode),
                         decision_dates=sorted(scored["trade_date"].dropna().unique()),
                     ),
-                    min_weight=float(config.portfolio["single_name_min_weight"]),
-                    max_weight=float(config.portfolio["single_name_max_weight"]),
-                    allow_cash=bool(config.portfolio["allow_cash"]),
+                    min_weight=min_weight,
+                    max_weight=max_weight,
+                    allow_cash=allow_cash,
                     run_id=rid,
                     fold_id=fold_id,
                     score_version=score_version,
@@ -355,8 +420,8 @@ def main() -> None:
             backtest_params={
                 "cli_args": vars(args),
                 "strategy_params": strategy_params,
-                "execution": ExecutionConfig(),
-                "initial_cash": float(config.backtest["initial_cash"]),
+                "execution": _execution_config_for_mode(config, args.score_mode),
+                "initial_cash": _initial_cash_for_mode(config, args.score_mode, args.initial_cash),
                 "start_date": start_date,
                 "end_date": end_date,
             },

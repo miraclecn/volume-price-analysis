@@ -21,7 +21,16 @@ def init_ml_db(path: Path | str) -> duckdb.DuckDBPyConnection:
 def _apply_migrations(con: duckdb.DuckDBPyConnection) -> None:
     alters = [
         "alter table ml_tradeability_daily add column if not exists is_bse boolean",
+        "alter table ml_tradeability_daily add column if not exists limit_up_pct double",
+        "alter table ml_tradeability_daily add column if not exists limit_down_pct double",
+        "alter table ml_tradeability_daily add column if not exists limit_band varchar",
         "alter table ml_feature_mart_daily add column if not exists is_bse boolean",
+        "alter table ml_feature_mart_daily add column if not exists limit_up_pct double",
+        "alter table ml_feature_mart_daily add column if not exists limit_down_pct double",
+        "alter table ml_feature_mart_daily add column if not exists limit_band varchar",
+        "alter table ml_labels_daily add column if not exists limit_up_pct double",
+        "alter table ml_labels_daily add column if not exists limit_down_pct double",
+        "alter table ml_labels_daily add column if not exists limit_band varchar",
         "alter table ml_predictions_daily add column if not exists run_id varchar",
         "alter table ml_predictions_daily add column if not exists fold_id varchar",
         "alter table ml_predictions_daily add column if not exists absolute_model_id varchar",

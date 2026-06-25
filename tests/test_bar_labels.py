@@ -22,6 +22,8 @@ def _feature_row(**overrides):
         "range_rvol_n": 1.0,
         "price_high_n": 11.0,
         "price_low_n": 9.0,
+        "prev_price_high_n": 11.0,
+        "prev_price_low_n": 9.0,
         "high": 10.8,
         "low": 9.8,
         "close": 10.6,
@@ -85,3 +87,47 @@ def test_single_day_labels_do_not_emit_stage_conclusions():
     assert not labels["raw_label"].isin(
         ["POSSIBLE_ACCUMULATION", "POSSIBLE_DISTRIBUTION"]
     ).any()
+
+
+def test_breakout_pullback_uses_prior_high_not_current_window_high():
+    labels = label_bars(
+        pd.DataFrame(
+            [
+                _feature_row(
+                    ret_pct=0.01,
+                    high=12.0,
+                    close=11.4,
+                    price_high_n=12.0,
+                    prev_price_high_n=13.0,
+                    upper_shadow_ratio=0.5,
+                    body_ratio=0.2,
+                    vol_rvol_n=1.2,
+                )
+            ]
+        ),
+        {20: [60]},
+    )
+
+    assert labels.iloc[0]["raw_label"] != "BREAKOUT_PULLBACK"
+
+
+def test_breakdown_recovery_uses_prior_low_not_current_window_low():
+    labels = label_bars(
+        pd.DataFrame(
+            [
+                _feature_row(
+                    ret_pct=-0.01,
+                    low=8.0,
+                    close=8.6,
+                    price_low_n=8.0,
+                    prev_price_low_n=7.5,
+                    lower_shadow_ratio=0.5,
+                    body_ratio=0.2,
+                    vol_rvol_n=1.2,
+                )
+            ]
+        ),
+        {20: [60]},
+    )
+
+    assert labels.iloc[0]["raw_label"] != "BREAKDOWN_RECOVERY"

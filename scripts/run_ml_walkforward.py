@@ -35,6 +35,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--horizon-d", type=int)
     parser.add_argument("--label-base")
     parser.add_argument("--score-version", default="v2_three_model")
+    parser.add_argument("--model-mode", choices=["three_model", "alpha_risk"], default="three_model")
     parser.add_argument("--run-artifact-dir", default="outputs/ml/runs")
     parser.add_argument("--from-stage", choices=STAGES, default="matrix")
     parser.add_argument("--to-stage", choices=STAGES, default="backtest")
@@ -127,6 +128,7 @@ def main() -> None:
                 batch_size=args.batch_size,
                 prediction_chunk_size=args.prediction_chunk_size,
                 force=args.force,
+                model_mode=args.model_mode,
             )
         else:
             if not args.allow_legacy_json_path:

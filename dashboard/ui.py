@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import duckdb
 import pandas as pd
 
 
-DEFAULT_DB = "outputs/ml/ml.duckdb"
+DEFAULT_DB = os.environ.get("VPA_DASHBOARD_ML_DB", "outputs/ml/ml_ret5_alpha_risk_20260619.duckdb")
+DEFAULT_LIVE_SIM_DB = os.environ.get("VPA_DASHBOARD_LIVE_SIM_DB", "outputs/ml/live_sim/live_sim_state.duckdb")
 
 
 def get_streamlit():

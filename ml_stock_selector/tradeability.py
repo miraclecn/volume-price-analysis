@@ -4,10 +4,12 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
+from ml_stock_selector.limit_bands import add_limit_band_columns
 from ml_stock_selector.universe import detect_is_bse
 
 
 def build_tradeability_mart(normalized_bars: pd.DataFrame, adv_window: int = 20) -> pd.DataFrame:
+    normalized_bars = add_limit_band_columns(normalized_bars)
     rows = []
     generated_at = datetime.now(timezone.utc).isoformat()
     for _, group in normalized_bars.sort_values(["code", "trade_date"]).groupby("code", sort=False):
@@ -30,6 +32,9 @@ def build_tradeability_mart(normalized_bars: pd.DataFrame, adv_window: int = 20)
         "is_paused",
         "limit_up",
         "limit_down",
+        "limit_up_pct",
+        "limit_down_pct",
+        "limit_band",
         "open",
         "high",
         "low",

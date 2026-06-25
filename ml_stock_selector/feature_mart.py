@@ -101,13 +101,14 @@ def build_feature_mart(
     tradeability: pd.DataFrame,
     exclude_industry_metadata_from_features_json: bool = False,
 ) -> pd.DataFrame:
-    bars = normalized_bars[(normalized_bars["trade_date"] >= start_date) & (normalized_bars["trade_date"] <= end_date)]
-    ohlcv = build_ohlcv_features(bars, windows)
+    feature_input = normalized_bars[normalized_bars["trade_date"] <= end_date]
+    ohlcv_all = build_ohlcv_features(feature_input, windows)
+    ohlcv = ohlcv_all[(ohlcv_all["trade_date"] >= start_date) & (ohlcv_all["trade_date"] <= end_date)].reset_index(drop=True)
     base_cols = ["trade_date", "code"]
     feature_cols = [
         col
         for col in ohlcv.columns
-        if col not in set(normalized_bars.columns) or col in {"amount", "turnover_rate"}
+        if col not in set(feature_input.columns) or col in {"amount", "turnover_rate"}
     ]
     wide = ohlcv[base_cols + sorted(set(feature_cols) - set(base_cols))].copy()
     if feature_set_id in {FEATURE_SET_BASELINE_B, FEATURE_SET_VPA_C, FEATURE_SET_VPA_D, FEATURE_SET_VPA_E}:
@@ -129,6 +130,9 @@ def build_feature_mart(
         "is_paused",
         "limit_up",
         "limit_down",
+        "limit_up_pct",
+        "limit_down_pct",
+        "limit_band",
         "adv20_amount",
         "can_buy_next_open",
         "can_sell_next_open",
@@ -162,6 +166,9 @@ def build_feature_mart(
         "is_paused",
         "limit_up",
         "limit_down",
+        "limit_up_pct",
+        "limit_down_pct",
+        "limit_band",
         "adv20_amount",
         "can_buy_next_open",
         "can_sell_next_open",
@@ -193,16 +200,20 @@ def _read_vpa(vpa_db_path: str, table: str, start_date: str, end_date: str, wind
 def _pivot_by_window(frame: pd.DataFrame, value_columns: list[str]) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame(columns=["trade_date", "code"])
-    rows = []
-    for (date, code), group in frame.groupby(["date", "scope_id"], sort=False):
-        row: dict[str, object] = {"trade_date": date, "code": code}
-        for item in group.itertuples(index=False):
-            window = int(item.window_n)
-            for col in value_columns:
-                if col in frame.columns:
-                    row[f"{col}_{window}"] = getattr(item, col)
-        rows.append(row)
-    return pd.DataFrame(rows)
+    available = [col for col in value_columns if col in frame.columns]
+    if not available:
+        return (
+            frame[["date", "scope_id"]]
+            .drop_duplicates()
+            .rename(columns={"date": "trade_date", "scope_id": "code"})
+        )
+    wide = frame[["date", "scope_id", "window_n", *available]].pivot(
+        index=["date", "scope_id"],
+        columns="window_n",
+        values=available,
+    )
+    wide.columns = [f"{column}_{int(window)}" for column, window in wide.columns]
+    return wide.reset_index().rename(columns={"date": "trade_date", "scope_id": "code"})
 
 
 def _merge(left: pd.DataFrame, right: pd.DataFrame) -> pd.DataFrame:

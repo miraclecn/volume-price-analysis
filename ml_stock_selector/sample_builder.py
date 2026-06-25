@@ -35,8 +35,6 @@ def _filter_executable(samples: pd.DataFrame, min_adv20_amount: float | None) ->
     if "is_bse" not in out and "code" in out:
         out = apply_universe_filter(out, exclude_bse=False)
     mask = pd.Series(True, index=out.index)
-    if "can_buy_next_open" in out:
-        mask &= out["can_buy_next_open"].fillna(False).astype(bool)
     if "is_bse" in out:
         mask &= ~out["is_bse"].fillna(False).astype(bool)
     for column in ["is_st", "is_paused"]:

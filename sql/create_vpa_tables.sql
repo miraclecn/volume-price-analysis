@@ -27,11 +27,16 @@ create table if not exists vpa_features (
     body_rvol_n double,
     price_high_n double,
     price_low_n double,
+    prev_price_high_n double,
+    prev_price_low_n double,
     price_position_n double,
     ma_n double,
     ma_slope_n double,
     primary key (date, scope_type, scope_id, window_n)
 );
+
+alter table vpa_features add column if not exists prev_price_high_n double;
+alter table vpa_features add column if not exists prev_price_low_n double;
 
 create table if not exists vpa_trend_context (
     date varchar not null,

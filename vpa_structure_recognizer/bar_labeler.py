@@ -75,10 +75,12 @@ def _label_row(row: object) -> tuple[str, str, str]:
     high = _value(row.high)
     low = _value(row.low)
     close = _value(row.close)
-    has_price_high = not _missing(row.price_high_n)
-    has_price_low = not _missing(row.price_low_n)
-    price_high_n = _value(row.price_high_n)
-    price_low_n = _value(row.price_low_n)
+    prior_high = getattr(row, "prev_price_high_n", row.price_high_n)
+    prior_low = getattr(row, "prev_price_low_n", row.price_low_n)
+    has_prior_high = not _missing(prior_high)
+    has_prior_low = not _missing(prior_low)
+    prior_high_n = _value(prior_high)
+    prior_low_n = _value(prior_low)
     if (
         vol_rvol_n >= 1.8
         and range_rvol_n <= 0.9
@@ -128,26 +130,26 @@ def _label_row(row: object) -> tuple[str, str, str]:
             "Large down move occurred on low relative volume.",
         )
     if (
-        has_price_high
-        and high >= price_high_n
-        and close < price_high_n
+        has_prior_high
+        and high >= prior_high_n
+        and close < prior_high_n
         and upper_shadow_ratio >= 0.45
     ):
         return (
             "BREAKOUT_PULLBACK",
             "ABNORMAL",
-            "Intraday breakout could not hold by the close.",
+            "Intraday breakout above prior high could not hold by the close.",
         )
     if (
-        has_price_low
-        and low <= price_low_n
-        and close > price_low_n
+        has_prior_low
+        and low <= prior_low_n
+        and close > prior_low_n
         and lower_shadow_ratio >= 0.45
     ):
         return (
             "BREAKDOWN_RECOVERY",
             "ABNORMAL",
-            "Intraday breakdown recovered by the close.",
+            "Intraday breakdown below prior low recovered by the close.",
         )
     if (
         ret_pct > 0

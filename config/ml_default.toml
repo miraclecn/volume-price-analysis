@@ -16,6 +16,18 @@ horizons = [1, 5, 10]
 main_horizon = 5
 label_base = "from_next_open"
 risk_drawdown_threshold = -0.05
+rank_group_by_limit_band = true
+rank_label_thresholds = [
+  { label = 4, min_rank_pct = 0.99 },
+  { label = 3, min_rank_pct = 0.95 },
+  { label = 2, min_rank_pct = 0.90 },
+  { label = 1, min_rank_pct = 0.70 },
+]
+
+[labels.future_score_weights]
+future_ret = 1.0
+future_max_gain = 0.5
+future_max_drawdown_abs = -0.7
 
 [split]
 embargo_days = 10

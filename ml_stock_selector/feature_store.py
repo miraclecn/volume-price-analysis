@@ -26,6 +26,9 @@ DENIED_FEATURE_COLUMNS = {
     "is_paused",
     "can_buy_next_open",
     "can_sell_next_open",
+    "limit_up_pct",
+    "limit_down_pct",
+    "limit_band",
 }
 
 
